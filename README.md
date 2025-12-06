@@ -57,12 +57,10 @@ The FastAPI-based backend for the MeetLens MVP. This service provides real-time 
 
 ### Running the Server
 
-Start the application using Uvicorn:
+Start the application using FastAPI CLI (recommended for development):
 
 ```sh
-python main.py
-# OR
-uvicorn main:app --reload
+fastapi dev main.py
 ```
 
 The server will start at `http://0.0.0.0:8000`.
