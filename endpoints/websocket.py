@@ -16,13 +16,17 @@ from models.messages import (
 )
 from services.session_manager import session_manager
 from services.elevenlabs_service import elevenlabs_manager
-from services.translation_service import translate_segment
+from services.translation_service import (
+    translate_segment,
+    DEFAULT_SOURCE_LANG as TRANSLATION_SOURCE_LANG,
+    DEFAULT_TARGET_LANG as TRANSLATION_TARGET_LANG,
+)
 
 logger = logging.getLogger(__name__)
 
-# Default languages for translation
-DEFAULT_SOURCE_LANG = "en"
-DEFAULT_TARGET_LANG = "tr"
+# Default languages for translation (keeps in sync with translation_service env defaults)
+DEFAULT_SOURCE_LANG = TRANSLATION_SOURCE_LANG
+DEFAULT_TARGET_LANG = TRANSLATION_TARGET_LANG
 
 
 async def websocket_transcribe(websocket: WebSocket):
@@ -132,24 +136,40 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                         # Translate ONLY the new incremental segment (not the full buffer)
                         # This reduces token usage and latency significantly
                         try:
+                            logger.info(
+                                f"Translating stable segment for session {session_id} "
+                                f"({len(stable_text)} chars) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
+                            )
                             translated_text = await translate_segment(
                                 stable_text,  # This is already the incremental new part
                                 source_lang=DEFAULT_SOURCE_LANG,
                                 target_lang=DEFAULT_TARGET_LANG
                             )
                             
-                            if translated_text:
-                                translation_msg = TranslationMessage(
-                                    type="translation",
-                                    session_id=session_id,
-                                    text=translated_text
+                            if not translated_text or not translated_text.strip():
+                                logger.warning(
+                                    f"Translation empty for session {session_id}; falling back to source text"
                                 )
-                                logger.debug(f"Sending translation to client (incremental): '{translated_text[:100]}...'")
-                                await websocket.send_json(translation_msg.model_dump())
+                                translated_text = stable_text
+                            
+                            translation_msg = TranslationMessage(
+                                type="translation",
+                                session_id=session_id,
+                                text=translated_text
+                            )
+                            logger.info(
+                                f"Sending translation to client (incremental): '{translated_text[:100]}...'"
+                            )
+                            await websocket.send_json(translation_msg.model_dump())
                         
                         except Exception as e:
-                            logger.error(f"Translation failed for segment: {str(e)}")
-                            # Don't send error to client for translation failures (non-critical)
+                            logger.error(f"Translation failed for segment: {str(e)}", exc_info=True)
+                            await _send_error(
+                                websocket,
+                                session_id,
+                                f"Translation failed: {str(e)}",
+                                code="TRANSLATION_ERROR"
+                            )
                     else:
                         logger.warning(f"Received empty transcript_stable, skipping")
                 

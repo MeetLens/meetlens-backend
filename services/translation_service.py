@@ -25,6 +25,8 @@ def _get_client() -> OpenAI:
 # Default languages (can be overridden via environment variables)
 DEFAULT_SOURCE_LANG = os.getenv("SOURCE_LANGUAGE", "en")
 DEFAULT_TARGET_LANG = os.getenv("TARGET_LANGUAGE", "tr")
+# Model can be overridden; pick a lightweight, widely available default
+TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-4o-mini")
 
 
 async def translate_segment(
@@ -56,7 +58,10 @@ async def translate_segment(
     
     try:
         # Build translation prompt
-        prompt = f"Translate the following sentence from {source_lang} to {target_lang}. Return only the translation, no explanations:\n\n{text}"
+        prompt = (
+            f"Translate the following sentence from {source_lang} to {target_lang}. "
+            f"Return only the translation, no explanations:\n\n{text}"
+        )
         
         # Call GPT API (run sync call in executor to avoid blocking)
         client = _get_client()
@@ -64,12 +69,15 @@ async def translate_segment(
         response = await loop.run_in_executor(
             None,
             lambda: client.chat.completions.create(
-                model="gpt-5-nano",
+                model=TRANSLATION_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are a professional translator. Translate accurately and naturally."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a professional translator. Translate accurately and naturally.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
-                max_completion_tokens=500
+                max_completion_tokens=500,
             )
         )
         
