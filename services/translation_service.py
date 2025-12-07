@@ -64,13 +64,12 @@ async def translate_segment(
         response = await loop.run_in_executor(
             None,
             lambda: client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": "You are a professional translator. Translate accurately and naturally."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                max_tokens=500
+                max_completion_tokens=500
             )
         )
         

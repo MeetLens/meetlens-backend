@@ -71,12 +71,11 @@ Return only valid JSON, no additional text."""
         response = await loop.run_in_executor(
             None,
             lambda: client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": "You are a professional meeting assistant. Extract key information, action items, and decisions from meeting transcripts. Always return valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
                 response_format={"type": "json_object"}
             )
         )
