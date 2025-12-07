@@ -15,8 +15,7 @@ from models.messages import (
     ErrorMessage
 )
 from services.session_manager import session_manager
-from services.whisper_service import transcribe_audio
-from services.transcript_merger import process_transcript
+from services.elevenlabs_service import elevenlabs_manager
 from services.translation_service import translate_segment
 
 logger = logging.getLogger(__name__)
@@ -34,6 +33,9 @@ async def websocket_transcribe(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket connection accepted")
     
+    # Track active sessions for this WebSocket connection
+    active_sessions = set()
+    
     try:
         while True:
             # Receive message from client
@@ -50,9 +52,9 @@ async def websocket_transcribe(websocket: WebSocket):
                 
                 # Route by message type
                 if message_type == "audio_chunk":
-                    await _handle_audio_chunk(websocket, message_dict, session_id)
+                    await _handle_audio_chunk(websocket, message_dict, session_id, active_sessions)
                 elif message_type == "end_session":
-                    await _handle_end_session(websocket, message_dict, session_id)
+                    await _handle_end_session(websocket, message_dict, session_id, active_sessions)
                 else:
                     await _send_error(websocket, session_id, f"Unknown message type: {message_type}")
             
@@ -71,15 +73,22 @@ async def websocket_transcribe(websocket: WebSocket):
             await _send_error(websocket, "unknown", f"Connection error: {str(e)}")
         except:
             pass
+    finally:
+        # Cleanup: close all ElevenLabs sessions for this WebSocket connection
+        for session_id in active_sessions:
+            try:
+                await elevenlabs_manager.close_session(session_id)
+            except Exception as e:
+                logger.error(f"Error closing ElevenLabs session {session_id} on disconnect: {str(e)}")
 
 
-async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_id: str):
-    """Handle audio_chunk message: transcribe, merge, translate, and stream responses."""
+async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_id: str, active_sessions: set):
+    """Handle audio_chunk message: forward to ElevenLabs and stream responses."""
     try:
         # Parse and validate message
         audio_chunk_msg = AudioChunkMessage(**message_dict)
         
-        # Get or create session state
+        # Get or create session state (for full transcript accumulation)
         session_state = await session_manager.get_or_create(session_id)
         
         # Decode base64 audio data
@@ -89,76 +98,111 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
             await _send_error(websocket, session_id, f"Failed to decode audio data: {str(e)}")
             return
         
-        # Transcribe audio using Whisper (async)
-        try:
-            raw_transcript = await transcribe_audio(audio_bytes, audio_chunk_msg.audio_format)
-        except Exception as e:
-            logger.error(f"Whisper transcription failed for chunk {audio_chunk_msg.chunk_id}: {str(e)}")
-            await _send_error(websocket, session_id, f"Transcription failed: {str(e)}", code="WHISPER_ERROR")
-            return
-        
-        if not raw_transcript or not raw_transcript.strip():
-            # Empty transcript (silence), skip processing
-            logger.debug(f"Empty transcript from Whisper for chunk {audio_chunk_msg.chunk_id} - likely silence")
-            return
-        
-        # Process transcript through merger
-        partial_text, stable_segment = process_transcript(raw_transcript, session_state)
-        
-        # Update session state
-        await session_manager.update(session_id, session_state)
-        
-        # Send transcript_partial if available
-        if partial_text:
-            partial_msg = TranscriptPartialMessage(
-                type="transcript_partial",
-                session_id=session_id,
-                chunk_id=audio_chunk_msg.chunk_id,
-                text=partial_text
-            )
-            await websocket.send_json(partial_msg.model_dump())
-        
-        # Send transcript_stable if available
-        if stable_segment:
-            stable_msg = TranscriptStableMessage(
-                type="transcript_stable",
-                session_id=session_id,
-                text=stable_segment
-            )
-            await websocket.send_json(stable_msg.model_dump())
-            
-            # Translate stable segment
+        # Create event callback for ElevenLabs events
+        async def event_callback(event_type: str, data: dict):
+            """Callback to forward ElevenLabs events to MeetLens client."""
             try:
-                translated_text = await translate_segment(
-                    stable_segment,
-                    source_lang=DEFAULT_SOURCE_LANG,
-                    target_lang=DEFAULT_TARGET_LANG
-                )
-                
-                if translated_text:
-                    translation_msg = TranslationMessage(
-                        type="translation",
+                logger.debug(f"Event callback called: event_type={event_type}, data={data}")
+                if event_type == "transcript_partial":
+                    partial_msg = TranscriptPartialMessage(
+                        type="transcript_partial",
                         session_id=session_id,
-                        text=translated_text
+                        chunk_id=data.get("chunk_id", audio_chunk_msg.chunk_id),
+                        text=data.get("text", "")
                     )
-                    await websocket.send_json(translation_msg.model_dump())
+                    logger.debug(f"Sending transcript_partial to client: chunk_id={partial_msg.chunk_id}, text='{partial_msg.text[:50]}...'")
+                    await websocket.send_json(partial_msg.model_dump())
+                
+                elif event_type == "transcript_stable":
+                    stable_text = data.get("text", "")
+                    logger.info(f"Event callback received transcript_stable (incremental): '{stable_text[:100]}...'")
+                    if stable_text:
+                        stable_msg = TranscriptStableMessage(
+                            type="transcript_stable",
+                            session_id=session_id,
+                            text=stable_text
+                        )
+                        logger.debug(f"Sending transcript_stable to client: '{stable_text[:100]}...'")
+                        await websocket.send_json(stable_msg.model_dump())
+                        
+                        # Update session state with stable transcript (incremental append)
+                        session_state.full_transcript += " " + stable_text if session_state.full_transcript else stable_text
+                        await session_manager.update(session_id, session_state)
+                        
+                        # Translate ONLY the new incremental segment (not the full buffer)
+                        # This reduces token usage and latency significantly
+                        try:
+                            translated_text = await translate_segment(
+                                stable_text,  # This is already the incremental new part
+                                source_lang=DEFAULT_SOURCE_LANG,
+                                target_lang=DEFAULT_TARGET_LANG
+                            )
+                            
+                            if translated_text:
+                                translation_msg = TranslationMessage(
+                                    type="translation",
+                                    session_id=session_id,
+                                    text=translated_text
+                                )
+                                logger.debug(f"Sending translation to client (incremental): '{translated_text[:100]}...'")
+                                await websocket.send_json(translation_msg.model_dump())
+                        
+                        except Exception as e:
+                            logger.error(f"Translation failed for segment: {str(e)}")
+                            # Don't send error to client for translation failures (non-critical)
+                    else:
+                        logger.warning(f"Received empty transcript_stable, skipping")
+                
+                elif event_type == "error":
+                    logger.warning(f"Event callback received error: {data}")
+                    await _send_error(
+                        websocket,
+                        session_id,
+                        data.get("message", "Unknown error"),
+                        code=data.get("code")
+                    )
+                else:
+                    logger.warning(f"Unknown event_type in callback: {event_type}")
             
             except Exception as e:
-                logger.error(f"Translation failed for segment: {str(e)}")
-                # Don't send error to client for translation failures (non-critical)
+                logger.error(f"Error in event callback: {str(e)}", exc_info=True)
+        
+        # Get or create ElevenLabs session
+        try:
+            logger.debug(f"Getting/creating ElevenLabs session for {session_id}, chunk_id: {audio_chunk_msg.chunk_id}, audio_size: {len(audio_bytes)} bytes")
+            elevenlabs_session = await elevenlabs_manager.get_or_create_session(
+                session_id,
+                event_callback
+            )
+            active_sessions.add(session_id)
+            
+            # Send audio chunk to ElevenLabs
+            logger.debug(f"Sending audio chunk {audio_chunk_msg.chunk_id} to ElevenLabs session {session_id}")
+            await elevenlabs_session.send_audio_chunk(audio_bytes, audio_chunk_msg.chunk_id)
+        
+        except Exception as e:
+            logger.error(f"ElevenLabs transcription failed for chunk {audio_chunk_msg.chunk_id}: {str(e)}", exc_info=True)
+            await _send_error(websocket, session_id, f"Transcription failed: {str(e)}", code="ELEVENLABS_ERROR")
     
     except Exception as e:
         logger.error(f"Error handling audio chunk: {str(e)}")
         await _send_error(websocket, session_id, f"Failed to process audio chunk: {str(e)}")
 
 
-async def _handle_end_session(websocket: WebSocket, message_dict: dict, session_id: str):
-    """Handle end_session message: finalize session state."""
+async def _handle_end_session(websocket: WebSocket, message_dict: dict, session_id: str, active_sessions: set):
+    """Handle end_session message: finalize session state and close ElevenLabs connection."""
     try:
         # Validate message
         end_session_msg = EndSessionMessage(**message_dict)
         
-        # Finalize session
+        # Close ElevenLabs session
+        try:
+            await elevenlabs_manager.close_session(session_id)
+            active_sessions.discard(session_id)
+        except Exception as e:
+            logger.error(f"Error closing ElevenLabs session {session_id}: {str(e)}")
+        
+        # Finalize session state
         session_state = await session_manager.finalize(session_id)
         
         if session_state:

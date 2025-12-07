@@ -67,8 +67,5 @@ class SummaryResponse(BaseModel):
 # Internal Backend Models
 class SessionState(BaseModel):
     session_id: str
-    last_stable_text: str = ""
-    tail_words: List[str] = []  # last N words for overlap detection
-    buffer_unstable: str = ""  # unstable text from last chunk
-    full_transcript: str = ""  # accumulated stable transcript
+    full_transcript: str = ""  # accumulated stable transcript (from ElevenLabs committed_transcript events)
 

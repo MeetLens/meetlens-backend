@@ -34,9 +34,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Verify OpenAI API key is set
+# Verify API keys are set
+if not os.getenv("ELEVENLABS_API_KEY"):
+    logger.warning("ELEVENLABS_API_KEY environment variable not set. Transcription will fail.")
 if not os.getenv("OPENAI_API_KEY"):
-    logger.warning("OPENAI_API_KEY environment variable not set. API calls will fail.")
+    logger.warning("OPENAI_API_KEY environment variable not set. Translation and summary will fail.")
 
 
 @app.get("/")
