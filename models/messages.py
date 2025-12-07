@@ -3,7 +3,7 @@ Pydantic models for WebSocket messages and HTTP requests/responses.
 All models follow the API & Schema Contract specification.
 """
 from typing import Literal, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # WebSocket Message Models (Client → Server)
@@ -67,5 +67,8 @@ class SummaryResponse(BaseModel):
 # Internal Backend Models
 class SessionState(BaseModel):
     session_id: str
+    last_stable_text: str = ""
+    tail_words: List[str] = Field(default_factory=list)
+    buffer_unstable: str = ""
     full_transcript: str = ""  # accumulated stable transcript (from ElevenLabs committed_transcript events)
 

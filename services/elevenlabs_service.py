@@ -9,7 +9,7 @@ import logging
 import asyncio
 from typing import Optional, Callable, Dict
 from websockets.client import connect
-from websockets.exceptions import ConnectionClosed, WebSocketException
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class ElevenLabsRealtimeSession:
                         # Update last_committed_text to FULL current text for next diff
                         self._last_committed_text = text
                     else:
-                        logger.debug(f"Skipping empty/duplicate committed_transcript")
+                        logger.debug("Skipping empty/duplicate committed_transcript")
                 except Exception as e:
                     logger.error(f"Error calling event callback for committed_transcript: {str(e)}", exc_info=True)
         
@@ -279,9 +279,14 @@ class ElevenLabsSessionManager:
     def _get_api_key(self) -> str:
         """Get ElevenLabs API key from environment."""
         if not self._api_key:
-            api_key = os.getenv("ELEVENLABS_API_KEY")
+            api_key = (
+                os.getenv("ELEVENLABS_API_KEY")
+                or os.getenv("ELEVEN_LABS_API_KEY")  # Fallback naming
+            )
             if not api_key:
-                raise ValueError("ELEVENLABS_API_KEY environment variable is not set")
+                raise ValueError(
+                    "ElevenLabs API key not configured. Set ELEVENLABS_API_KEY in your environment or .env file"
+                )
             self._api_key = api_key
         return self._api_key
     

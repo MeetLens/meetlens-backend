@@ -25,8 +25,8 @@ def _get_client() -> OpenAI:
 # Default languages (can be overridden via environment variables)
 DEFAULT_SOURCE_LANG = os.getenv("SOURCE_LANGUAGE", "en")
 DEFAULT_TARGET_LANG = os.getenv("TARGET_LANGUAGE", "tr")
-# Model can be overridden; pick a lightweight, widely available default
-TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-4o-mini")
+# Model can be overridden; default to a widely available, fast model
+TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-4.1-mini")
 
 
 async def translate_segment(

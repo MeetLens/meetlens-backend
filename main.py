@@ -4,12 +4,16 @@ Main entry point for the MeetLens MVP backend.
 """
 import os
 import logging
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from models.messages import SummaryRequest, SummaryResponse
 from services.summary_service import generate_summary
 from endpoints.websocket import websocket_transcribe
 from fastapi import WebSocket
+
+# Load environment variables from .env for local development
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
