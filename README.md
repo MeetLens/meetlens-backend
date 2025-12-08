@@ -91,3 +91,15 @@ Run the test suite using `pytest`:
 ```sh
 pytest
 ```
+
+## Deployment
+
+### DigitalOcean App Platform
+
+- Ensure `OPENAI_API_KEY` and `ELEVENLABS_API_KEY` are set as environment variables.
+- The provided `Procfile` sets the web process to run Uvicorn on the port exposed by the platform (`PORT`, default 8080):
+  ```
+  web: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
+  ```
+- In the App Platform settings, you can leave the "Run Command" empty to use the `Procfile`, or explicitly set the same command. The public HTTP port should be `8080` to match the default.
+- The health check can point to `/` on the same port.
