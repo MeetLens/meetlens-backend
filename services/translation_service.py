@@ -5,6 +5,7 @@ Translates stable transcript segments from source to target language.
 import os
 import logging
 from openai import OpenAI
+from services.usage_tracker import usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,12 @@ async def translate_segment(
                 ],
                 max_completion_tokens=500,
             )
+        )
+
+        usage_tracker.track_completion_response(
+            model=TRANSLATION_MODEL,
+            response=response,
+            request_name="translation",
         )
         
         translated_text = response.choices[0].message.content.strip()
