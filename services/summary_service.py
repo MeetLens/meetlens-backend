@@ -7,6 +7,7 @@ import json
 import re
 import logging
 from openai import APIError, APITimeoutError, OpenAI, RateLimitError
+from services.usage_tracker import usage_tracker
 from models.messages import SummaryBlock
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,12 @@ Return only valid JSON, no additional text."""
             )
         )
 
+        usage_tracker.track_completion_response(
+            model=response.model,
+            response=response,
+            request_name="summary",
+        )
+        
         # Parse JSON response
         response_text = response.choices[0].message.content.strip()
 
