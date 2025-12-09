@@ -7,6 +7,7 @@ import json
 import re
 import logging
 from openai import OpenAI
+from services.usage_tracker import usage_tracker
 from models.messages import SummaryBlock
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,12 @@ Return only valid JSON, no additional text."""
                 ],
                 response_format={"type": "json_object"}
             )
+        )
+
+        usage_tracker.track_completion_response(
+            model=response.model,
+            response=response,
+            request_name="summary",
         )
         
         # Parse JSON response
