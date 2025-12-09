@@ -4,7 +4,7 @@ Translates stable transcript segments from source to target language.
 """
 import os
 import logging
-from openai import OpenAI
+from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,11 @@ async def translate_segment(
     
     Returns:
         Translated text string
-    
+
     Raises:
-        Exception: If translation fails
+        APIError: If the OpenAI API returns an error response
+        RateLimitError: If request is rate limited (falls back to source text)
+        APITimeoutError: If OpenAI request times out (falls back to source text)
     """
     import asyncio
     
@@ -62,7 +64,7 @@ async def translate_segment(
             f"Translate the following sentence from {source_lang} to {target_lang}. "
             f"Return only the translation, no explanations:\n\n{text}"
         )
-        
+
         # Call GPT API (run sync call in executor to avoid blocking)
         client = _get_client()
         loop = asyncio.get_event_loop()
@@ -80,10 +82,19 @@ async def translate_segment(
                 max_completion_tokens=500,
             )
         )
-        
+
         translated_text = response.choices[0].message.content.strip()
         return translated_text
-    
+
+    except RateLimitError as e:
+        logger.warning("Translation rate limited; returning source text fallback: %s", e)
+        return text
+    except APITimeoutError as e:
+        logger.warning("Translation request timed out; returning source text fallback: %s", e)
+        return text
+    except APIError as e:
+        logger.error("Translation API error: %s", e)
+        raise
     except Exception as e:
         logger.error(f"Translation failed: {str(e)}")
         raise

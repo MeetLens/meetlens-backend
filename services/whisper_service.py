@@ -7,7 +7,7 @@ import base64
 import io
 import wave
 import logging
-from openai import OpenAI
+from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,11 @@ async def transcribe_audio(audio_bytes: bytes, audio_format: str) -> str:
     
     Returns:
         Transcribed text string
-    
+
     Raises:
-        Exception: If transcription fails
+        APIError: If the OpenAI API returns an error response
+        RateLimitError: If request is rate limited (returns empty transcript for retry)
+        APITimeoutError: If OpenAI request times out (returns empty transcript for retry)
     """
     import asyncio
     
@@ -46,14 +48,14 @@ async def transcribe_audio(audio_bytes: bytes, audio_format: str) -> str:
         # Convert PCM bytes to WAV format for Whisper API
         # Format: pcm_s16le_16k_mono = 16-bit signed little-endian, 16kHz, mono
         wav_bytes = _pcm_to_wav(audio_bytes, sample_rate=16000, channels=1, sample_width=2)
-        
+
         # Create a file-like object from bytes
         audio_file = io.BytesIO(wav_bytes)
         audio_file.name = "audio.wav"
-        
+
         # Call OpenAI Whisper API (run sync call in executor to avoid blocking)
         client = _get_client()
-        
+
         # Run the synchronous API call in a thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         transcript = await loop.run_in_executor(
@@ -64,13 +66,22 @@ async def transcribe_audio(audio_bytes: bytes, audio_format: str) -> str:
                 response_format="text"
             )
         )
-        
+
         # Handle both string and object responses
         if isinstance(transcript, str):
             return transcript.strip()
         else:
             return str(transcript).strip()
-    
+
+    except RateLimitError as e:
+        logger.warning("Whisper transcription rate limited; returning empty transcript fallback: %s", e)
+        return ""
+    except APITimeoutError as e:
+        logger.warning("Whisper transcription timed out; returning empty transcript fallback: %s", e)
+        return ""
+    except APIError as e:
+        logger.error("Whisper transcription API error: %s", e)
+        raise
     except Exception as e:
         logger.error(f"Whisper transcription failed: {str(e)}")
         raise

@@ -6,7 +6,7 @@ import os
 import json
 import re
 import logging
-from openai import OpenAI
+from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 from models.messages import SummaryBlock
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,12 @@ async def generate_summary(
     
     Returns:
         SummaryBlock with short_overview, action_items, and decisions
-    
+
     Raises:
-        Exception: If summary generation fails
+        ValueError: If input transcript is empty
+        APIError: If the OpenAI API returns an error response
+        RateLimitError: If request is rate limited (falls back to transcript overview)
+        APITimeoutError: If OpenAI request times out (falls back to transcript overview)
     """
     import asyncio
     
@@ -64,7 +67,7 @@ Please provide a JSON response with the following structure:
 }}
 
 Return only valid JSON, no additional text."""
-        
+
         # Call GPT API (run sync call in executor to avoid blocking)
         client = _get_client()
         loop = asyncio.get_event_loop()
@@ -79,10 +82,10 @@ Return only valid JSON, no additional text."""
                 response_format={"type": "json_object"}
             )
         )
-        
+
         # Parse JSON response
         response_text = response.choices[0].message.content.strip()
-        
+
         # Try to parse as JSON
         try:
             summary_dict = json.loads(response_text)
@@ -93,16 +96,33 @@ Return only valid JSON, no additional text."""
                 summary_dict = json.loads(json_match.group(1))
             else:
                 raise ValueError("Failed to parse summary response as JSON")
-        
+
         # Validate and create SummaryBlock
         summary_block = SummaryBlock(
             short_overview=summary_dict.get("short_overview", ""),
             action_items=summary_dict.get("action_items", []),
             decisions=summary_dict.get("decisions", [])
         )
-        
+
         return summary_block
-    
+
+    except RateLimitError as e:
+        logger.warning("Summary generation rate limited; returning transcript fallback: %s", e)
+        return SummaryBlock(
+            short_overview=full_transcript.strip(),
+            action_items=[],
+            decisions=[],
+        )
+    except APITimeoutError as e:
+        logger.warning("Summary generation timed out; returning transcript fallback: %s", e)
+        return SummaryBlock(
+            short_overview=full_transcript.strip(),
+            action_items=[],
+            decisions=[],
+        )
+    except APIError as e:
+        logger.error("Summary generation API error: %s", e)
+        raise
     except Exception as e:
         logger.error(f"Summary generation failed: {str(e)}")
         raise
