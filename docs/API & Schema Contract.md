@@ -102,7 +102,7 @@ Kullanıcı toplantıyı bitirdiğinde gönderilir.
 
 ### 2.3.1. `transcript_partial`
 
-Whisper + merger pipeline’dan çıkan **anlık / unstable** transcript.
+Whisper + merger pipeline’dan çıkan **anlık / unstable** transcript.
 
 **Type:** `transcript_partial`
 
@@ -113,17 +113,16 @@ Whisper + merger pipeline’dan çıkan **anlık / unstable** transcript.
   "chunk_id": 1,
   "text": "Benim ad"
 }
-
 ```
 
 - `text`: Şu an işlenen chunk’a karşılık gelen geçici transkript (tam cümle olmak zorunda değil).
-- Client tarafında bu metin **gri / italik** gibi unstable olarak gösterilebilir.
+- `chunk_id`: Bu partial’ın ait olduğu chunk/segment. Aynı `chunk_id` ile gelen stable event partial’ı **değiştirir**; frontend partial bloğunu bu kimlikle güncellemelidir.
+- Client tarafında bu metin **gri / italik** gibi unstable olarak gösterilebilir.
 
 ---
-
 ### 2.3.2. `transcript_stable`
 
-Merger tarafından **güvenli, tamamlanmış** olduğu düşünülen transcript parçaları.
+Merger tarafından **güvenli, tamamlanmış** olduğu düşünülen transcript parçaları.
 
 **Type:** `transcript_stable`
 
@@ -131,20 +130,20 @@ Merger tarafından **güvenli, tamamlanmış** olduğu düşünülen transcrip
 {
   "type": "transcript_stable",
   "session_id": "d9f3d2c4-4c60-4d51-9b7f-1f7d0c07b111",
+  "chunk_id": 1,
   "text": "Benim adım Kadir."
 }
-
 ```
 
-- `text`: Full transcriptin **sona eklenecek** kısmı.
+- `text`: Full transcriptin **sona eklenecek** kısmı.
+- `chunk_id`: Stable segment kimliği; aynı `chunk_id` ile gelen yeni stable mesajı önceki stable/partial bloğunu **overwrite** eder (ElevenLabs önceki segmentleri revize edebilir).
 - Client tarafında:
-    - `stableTranscript += text`
-    - `unstableTranscript` içindeki ilgili kısım temizlenebilir.
+    - `stableTranscript[chunk_id] = text` (veya aynı etkiyi yaratacak replace işlemi)
+    - `unstableTranscript` içindeki ilgili kısım temizlenebilir.
 
-**Not:** `transcript_stable` mesajları incremental olarak gelir; client tam transcript’i, gelen `text` parçalarını sırayla append ederek oluşturur.
+**Not:** `transcript_stable` mesajları incremental olarak gelir; client tam transcript’i, gelen `chunk_id` sırasına göre append ederek veya map üzerinden sıralayarak oluşturur.
 
 ---
-
 ### 2.3.3. `translation`
 
 Stable bir cümle veya segment için üretilmiş çeviri.
@@ -155,21 +154,20 @@ Stable bir cümle veya segment için üretilmiş çeviri.
 {
   "type": "translation",
   "session_id": "d9f3d2c4-4c60-4d51-9b7f-1f7d0c07b111",
+  "chunk_id": 1,
   "text": "My name is Kadir."
 }
-
 ```
 
 - `text`: Hedef dilde (MVP’de sabit: örn. English → Turkish veya tersi) çeviri.
-- Client tarafında `translationText` state’ine append edilir.
+- `chunk_id`: Çevirinin ait olduğu transkript segmenti. Aynı `chunk_id` ile gelen yeni çeviri önceki bloğun **yerine** geçer (stable revizyonlarında overwrite). Client append etmek yerine `translationBlocks[chunk_id] = text` şeklinde güncellemeli.
 
 **MVP simplifying assumption:**
 
-- Her `transcript_stable` segmenti için **en az bir** `translation` mesajı gelir.
-- Çeviri, segment bazlı olduğu için baştan sona gelen tek bir string olarak birikmesi yeterlidir.
+- Her `transcript_stable` segmenti için **en az bir** `translation` mesajı gelir.
+- Çeviri, segment bazlı olduğu için baştan sona gelen tek bir string olarak birikmesi yeterlidir (chunk_id sıralı append veya map üzerinde join yeterli).
 
 ---
-
 ### 2.3.4. `error`
 
 İşlenemeyen chunk, model hatası vb. durumlarda backend’in gönderdiği hata mesajı.
@@ -277,7 +275,7 @@ Bu bölüm backend içindeki sınıflar için referans; frontend bunları **bil
 
 ```python
 from pydantic import BaseModel
-from typing import List
+from typing import Dict, List
 
 class SessionState(BaseModel):
     session_id: str
@@ -285,6 +283,7 @@ class SessionState(BaseModel):
     tail_words: List[str] = []      # overlap için son N kelime
     buffer_unstable: str = ""      # son chunk’tan gelen unstable parça
     full_transcript: str = ""      # tüm stable transcript
+    stable_segments: Dict[int, str] = {}  # committed transcript segmentleri (chunk_id → text)
 
 ```
 
@@ -314,11 +313,13 @@ class TranscriptPartialMessage(BaseModel):
 class TranscriptStableMessage(BaseModel):
     type: Literal["transcript_stable"]
     session_id: str
+    chunk_id: int
     text: str
 
 class TranslationMessage(BaseModel):
     type: Literal["translation"]
     session_id: str
+    chunk_id: int
     text: str
 
 class ErrorMessage(BaseModel):

@@ -2,7 +2,7 @@
 Pydantic models for WebSocket messages and HTTP requests/responses.
 All models follow the API & Schema Contract specification.
 """
-from typing import Literal, Optional, List
+from typing import Dict, Literal, Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -31,12 +31,14 @@ class TranscriptPartialMessage(BaseModel):
 class TranscriptStableMessage(BaseModel):
     type: Literal["transcript_stable"]
     session_id: str
+    chunk_id: int
     text: str
 
 
 class TranslationMessage(BaseModel):
     type: Literal["translation"]
     session_id: str
+    chunk_id: int
     text: str
 
 
@@ -71,4 +73,5 @@ class SessionState(BaseModel):
     tail_words: List[str] = Field(default_factory=list)
     buffer_unstable: str = ""
     full_transcript: str = ""  # accumulated stable transcript (from ElevenLabs committed_transcript events)
+    stable_segments: Dict[int, str] = Field(default_factory=dict)
 

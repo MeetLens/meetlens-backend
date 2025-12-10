@@ -42,7 +42,9 @@ class ElevenLabsRealtimeSession:
         self._chunk_id_counter = 0
         self._chunk_id_map: Dict[int, int] = {}  # Maps ElevenLabs event IDs to MeetLens chunk_ids
         self._current_chunk_id = 1  # Track current chunk_id for partial transcripts
-        self._last_committed_text = ""  # Track last committed transcript for simple prefix-based diff
+        self._last_committed_text = ""  # Track last committed transcript to detect duplicates
+        self._last_committed_chunk_id: Optional[int] = None
+        self._stable_segment_id = 1
     
     async def connect(self):
         """Establish WebSocket connection to ElevenLabs."""
@@ -174,36 +176,34 @@ class ElevenLabsRealtimeSession:
         
         elif event_type == "committed_transcript":
             # This is the ONLY source of transcript_stable messages
-            # Use simple prefix-based diff: if current_text starts with last_committed_text, extract suffix
             text = data.get("text", "").strip()
-            logger.debug(f"ElevenLabs committed_transcript: '{text[:100]}...' (last_committed: '{self._last_committed_text[:50] if self._last_committed_text else 'None'}...')")
+            logger.debug(
+                "ElevenLabs committed_transcript: '%s...' (last_committed: '%s...')",
+                text[:100],
+                self._last_committed_text[:50] if self._last_committed_text else 'None'
+            )
             if text:
                 try:
-                    # Simple prefix-based diff: extract only new portion
-                    if not self._last_committed_text:
-                        # First commit, send everything
-                        new_text = text
-                    elif text.startswith(self._last_committed_text):
-                        # Current text extends previous, extract only new suffix
-                        new_text = text[len(self._last_committed_text):].strip()
-                        # Remove leading space if present
-                        if new_text.startswith(' '):
-                            new_text = new_text[1:]
-                    else:
-                        # Text doesn't start with previous (might be correction or reset)
-                        # Send full text but log it
-                        logger.debug(f"Committed text doesn't start with previous (possible correction/reset). Previous: '{self._last_committed_text[:50]}...', Current: '{text[:50]}...'")
-                        new_text = text
-                    
-                    if new_text and len(new_text.strip()) > 0:
-                        logger.info(f"Sending incremental stable from committed_transcript: '{new_text[:100]}...'")
-                        await self.event_callback("transcript_stable", {
-                            "text": new_text
-                        })
-                        # Update last_committed_text to FULL current text for next diff
-                        self._last_committed_text = text
-                    else:
-                        logger.debug("Skipping empty/duplicate committed_transcript")
+                    chunk_id = (
+                        data.get("chunk_id")
+                        or data.get("segment_id")
+                        or self._current_chunk_id
+                        or self._stable_segment_id
+                    )
+
+                    if text == self._last_committed_text and chunk_id == self._last_committed_chunk_id:
+                        logger.debug("Skipping duplicate committed_transcript event")
+                        return
+
+                    await self.event_callback("transcript_stable", {
+                        "chunk_id": chunk_id,
+                        "text": text,
+                        "full_text": text,
+                    })
+
+                    self._last_committed_text = text
+                    self._last_committed_chunk_id = chunk_id
+                    self._stable_segment_id = chunk_id
                 except Exception as e:
                     logger.error(f"Error calling event callback for committed_transcript: {str(e)}", exc_info=True)
         

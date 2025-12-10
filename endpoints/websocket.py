@@ -108,44 +108,89 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
             try:
                 logger.debug(f"Event callback called: event_type={event_type}, data={data}")
                 if event_type == "transcript_partial":
+                    partial_text = data.get("text", "")
+                    if not partial_text or not partial_text.strip():
+                        logger.debug("Empty transcript_partial received; skipping")
+                        return
+
+                    chunk_id = data.get("chunk_id", audio_chunk_msg.chunk_id)
                     partial_msg = TranscriptPartialMessage(
                         type="transcript_partial",
                         session_id=session_id,
-                        chunk_id=data.get("chunk_id", audio_chunk_msg.chunk_id),
-                        text=data.get("text", "")
+                        chunk_id=chunk_id,
+                        text=partial_text
                     )
                     logger.debug(f"Sending transcript_partial to client: chunk_id={partial_msg.chunk_id}, text='{partial_msg.text[:50]}...'")
                     await websocket.send_json(partial_msg.model_dump())
-                
+
+                    try:
+                        translated_partial = await translate_segment(
+                            partial_text,
+                            source_lang=DEFAULT_SOURCE_LANG,
+                            target_lang=DEFAULT_TARGET_LANG
+                        )
+
+                        if not translated_partial or not translated_partial.strip():
+                            logger.debug(
+                                "Translated partial empty for session %s; falling back to source partial",
+                                session_id,
+                            )
+                            translated_partial = partial_text
+
+                        translation_msg = TranslationMessage(
+                            type="translation",
+                            session_id=session_id,
+                            chunk_id=chunk_id,
+                            text=translated_partial,
+                        )
+                        logger.debug(
+                            "Sending partial translation to client: chunk_id=%s, text='%s...'",
+                            translation_msg.chunk_id,
+                            translation_msg.text[:50],
+                        )
+                        await websocket.send_json(translation_msg.model_dump())
+                    except Exception as e:
+                        logger.error("Partial translation failed: %s", str(e), exc_info=True)
+                        await _send_error(
+                            websocket,
+                            session_id,
+                            f"Translation failed: {str(e)}",
+                            code="TRANSLATION_ERROR",
+                        )
+
                 elif event_type == "transcript_stable":
-                    stable_text = data.get("text", "")
+                    stable_text = data.get("full_text") or data.get("text", "")
+                    chunk_id = data.get("chunk_id", audio_chunk_msg.chunk_id)
                     logger.info(f"Event callback received transcript_stable (incremental): '{stable_text[:100]}...'")
                     if stable_text:
                         stable_msg = TranscriptStableMessage(
                             type="transcript_stable",
                             session_id=session_id,
+                            chunk_id=chunk_id,
                             text=stable_text
                         )
                         logger.debug(f"Sending transcript_stable to client: '{stable_text[:100]}...'")
                         await websocket.send_json(stable_msg.model_dump())
-                        
-                        # Update session state with stable transcript (incremental append)
-                        session_state.full_transcript += " " + stable_text if session_state.full_transcript else stable_text
+
+                        # Update session state with stable transcript mapped by chunk_id (supports replacements)
+                        session_state.stable_segments[chunk_id] = stable_text
+                        session_state.last_stable_text = stable_text
+                        session_state.full_transcript = " ".join(
+                            session_state.stable_segments[key] for key in sorted(session_state.stable_segments)
+                        ).strip()
                         await session_manager.update(session_id, session_state)
-                        
-                        # Translate ONLY the new incremental segment (not the full buffer)
-                        # This reduces token usage and latency significantly
+
                         try:
                             logger.info(
-                                f"Translating stable segment for session {session_id} "
+                                f"Translating stable segment for session {session_id} (chunk {chunk_id}) "
                                 f"({len(stable_text)} chars) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
                             )
                             translated_text = await translate_segment(
-                                stable_text,  # This is already the incremental new part
+                                stable_text,
                                 source_lang=DEFAULT_SOURCE_LANG,
                                 target_lang=DEFAULT_TARGET_LANG
                             )
-                            
+
                             if not translated_text or not translated_text.strip():
                                 logger.warning(
                                     f"Translation empty for session {session_id}; falling back to source text"
@@ -155,6 +200,7 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                             translation_msg = TranslationMessage(
                                 type="translation",
                                 session_id=session_id,
+                                chunk_id=chunk_id,
                                 text=translated_text
                             )
                             logger.info(
