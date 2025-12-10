@@ -361,13 +361,6 @@ class TranslationStableMessage(BaseModel):
     session_id: str
     text: str
 
-class TranslationMessage(BaseModel):
-    """Deprecated: legacy single-phase translation."""
-
-    type: Literal["translation"]
-    session_id: str
-    text: str
-
 class ErrorMessage(BaseModel):
     type: Literal["error"]
     session_id: str

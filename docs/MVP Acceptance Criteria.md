@@ -142,7 +142,7 @@ Gerisi MVP dışı (pricing, paketler, login vs).
     
     ```
     
-- [ ]  `TranscriptPartialMessage`, `TranscriptStableMessage`, `TranslationMessage`, `ErrorMessage` modelleri
+- [ ]  `TranscriptPartialMessage`, `TranscriptStableMessage`, `TranslationPartialMessage`, `TranslationStableMessage`, `ErrorMessage` modelleri
 
 ---
 

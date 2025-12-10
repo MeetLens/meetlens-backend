@@ -11,7 +11,8 @@ from models.messages import (
     EndSessionMessage,
     TranscriptPartialMessage,
     TranscriptStableMessage,
-    TranslationMessage,
+    TranslationPartialMessage,
+    TranslationStableMessage,
     ErrorMessage
 )
 from services.session_manager import session_manager
@@ -138,9 +139,10 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                 session_state.partial_translation = translated_partial
 
                                 if incremental_translation:
-                                    translation_msg = TranslationMessage(
-                                        type="translation",
+                                    translation_msg = TranslationPartialMessage(
+                                        type="translation_partial",
                                         session_id=session_id,
+                                        chunk_id=partial_msg.chunk_id,
                                         text=incremental_translation
                                     )
                                     logger.debug(
@@ -223,8 +225,8 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
 
                             session_state.partial_translation = ""
                             if translation_increment:
-                                translation_msg = TranslationMessage(
-                                    type="translation",
+                                translation_msg = TranslationStableMessage(
+                                    type="translation_stable",
                                     session_id=session_id,
                                     text=translation_increment
                                 )

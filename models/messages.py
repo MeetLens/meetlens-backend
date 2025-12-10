@@ -34,8 +34,15 @@ class TranscriptStableMessage(BaseModel):
     text: str
 
 
-class TranslationMessage(BaseModel):
-    type: Literal["translation"]
+class TranslationPartialMessage(BaseModel):
+    type: Literal["translation_partial"]
+    session_id: str
+    chunk_id: int
+    text: str
+
+
+class TranslationStableMessage(BaseModel):
+    type: Literal["translation_stable"]
     session_id: str
     text: str
 
