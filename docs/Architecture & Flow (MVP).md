@@ -24,7 +24,7 @@ MeetLens MVP consists of:
     - Sends audio chunks to OpenAI Whisper for transcription
     - Merges partial transcriptions into stable text (TranscriptMerger)
     - Sends stable segments to translation (GPT or similar)
-    - Streams `transcript_partial`, `transcript_stable`, and `translation` back to the client
+    - Streams `transcript_partial`, `transcript_stable`, `translation_partial`, and `translation_stable` back to the client
     - Generates meeting summary at the end using GPT
 - **External AI Services (OpenAI)**
     - Whisper (Speech-to-Text)
@@ -40,7 +40,7 @@ flowchart LR
         A["Mic Capture<br>PCM 16k mono"] --> B["Chunker<br>2s audio"]
         B --> C[WebSocket Client]
         C -->|"audio_chunk"| D
-        D -->|"transcript_partial /<br>transcript_stable / translation"| C
+        D -->|"transcript_partial /<br>transcript_stable / translation_partial /<br>translation_stable"| C
         E[Summary Screen]
     end
 
@@ -136,7 +136,8 @@ flowchart LR
 5. For each `stable_segment`:
     - Send it to **TranslationService**.
     - TranslationService calls GPT to translate that segment.
-    - When translation is ready → send `translation` message.
+    - As translation streams in, send `translation_partial` messages for the **live preview**.
+    - When the translation is finalized → send a `translation_stable` message for that segment.
 
 ---
 
@@ -172,18 +173,12 @@ The client only knows about `transcript_partial` and `transcript_stable`; int
     - Builds a short prompt for GPT: "Translate this sentence from [source_lang] to [target_lang]".
     - Sends the segment to GPT.
     - Receives translated text.
-3. Backend immediately sends a `translation` message over WebSocket:
-    
-    ```json
-    {
-      "type": "translation",
-      "session_id": "<uuid>",
-      "text": "Translated sentence here."
-    }
-    
-    ```
-    
-4. Client appends this translated text to the translation view.
+3. Backend streams translation updates over WebSocket:
+
+    - **Preview:** `translation_partial` (overwrites the previous preview for the same segment)
+    - **Finalized:** `translation_stable` (appends to stable translation log and clears preview)
+
+4. Client shows the `translation_partial` text as a live preview and appends `translation_stable` segments to the finalized translation view.
 
 ---
 

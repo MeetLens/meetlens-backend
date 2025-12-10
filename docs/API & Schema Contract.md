@@ -437,4 +437,7 @@ class SummaryResponse(BaseModel):
     - HTTP: `POST /summary`
     - Internal models: `SessionState`, Summary models
 - **v0.2** – Translation streaming split into partial/stable
-    - WebSocket: adds `translation_partial` + `translation_stable`; `translation` deprecated for backward compatibility
+    - WebSocket adds:
+        - `translation_partial` – live translation preview per stable segment
+        - `translation_stable` – finalized translation segments to append to the log
+    - WebSocket deprecates legacy single-shot `translation` messages (backward compatible if treated the same as `translation_stable`)
