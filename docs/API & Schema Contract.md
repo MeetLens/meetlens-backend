@@ -145,32 +145,66 @@ Merger tarafından **güvenli, tamamlanmış** olduğu düşünülen transcrip
 
 ---
 
-### 2.3.3. `translation`
+### 2.3.3. `translation_partial`
 
-Stable bir cümle veya segment için üretilmiş çeviri.
+Çevirinin henüz stabil olmayan, revize edilebilir kısmı. Yeni partial geldiğinde eski partial **tamamen overwrite** edilir; client append etmez.
 
-**Type:** `translation`
+**Type:** `translation_partial`
 
 ```json
 {
-  "type": "translation",
+  "type": "translation_partial",
+  "session_id": "d9f3d2c4-4c60-4d51-9b7f-1f7d0c07b111",
+  "chunk_id": 42,
+  "text": "My name i"
+}
+
+```
+
+- `text`: Hedef dilde (MVP’de sabit: örn. English → Turkish veya tersi) **geçici** çeviri.
+- `chunk_id`: Bu partial’ın bağlı olduğu ses chunk’ı (transcript_partial ile hizalamak için kullanılabilir).
+- Client tarafında:
+    - `unstableTranslation = text`
+    - Aynı segment için gelen yeni `translation_partial` mesajı, önceki `unstableTranslation`’ı **replace** eder.
+
+**Client UI ipucu:** Partial metin gri/italik gösterilebilir; stabilize olduğunda kaldırılmalıdır.
+
+---
+
+### 2.3.4. `translation_stable`
+
+Merger tarafından stabilize edilmiş, artık değişmeyecek çeviri segmenti. Stabil metinler birikimli şekilde **append** edilir.
+
+**Type:** `translation_stable`
+
+```json
+{
+  "type": "translation_stable",
   "session_id": "d9f3d2c4-4c60-4d51-9b7f-1f7d0c07b111",
   "text": "My name is Kadir."
 }
 
 ```
 
-- `text`: Hedef dilde (MVP’de sabit: örn. English → Turkish veya tersi) çeviri.
-- Client tarafında `translationText` state’ine append edilir.
+- `text`: Stabil, finalize edilmiş çeviri.
+- Client tarafında:
+    - `stableTranslation += text`
+    - İlgili `unstableTranslation` preview’u temizlenir (partial text overwrite → boş).
 
 **MVP simplifying assumption:**
 
-- Her `transcript_stable` segmenti için **en az bir** `translation` mesajı gelir.
-- Çeviri, segment bazlı olduğu için baştan sona gelen tek bir string olarak birikmesi yeterlidir.
+- Her `transcript_stable` segmenti için **en az bir** `translation_stable` mesajı gelir.
+- Stabil çeviriler gelen sırayla biriktirilir; bir kez gönderildikten sonra değişmez.
 
 ---
 
-### 2.3.4. `error`
+### 2.3.5. ~~`translation`~~ (deprecated)
+
+Önceki MVP’de kullanılan tek aşamalı çeviri mesajı. Yerine `translation_partial` + `translation_stable` kullanılır. Yeni client’lar bu mesaj tipini dinlememeli; backward compatibility gerekirse `translation_stable` ile aynı davranış (append) uygulanabilir.
+
+---
+
+### 2.3.6. `error`
 
 İşlenemeyen chunk, model hatası vb. durumlarda backend’in gönderdiği hata mesajı.
 
@@ -316,7 +350,20 @@ class TranscriptStableMessage(BaseModel):
     session_id: str
     text: str
 
+class TranslationPartialMessage(BaseModel):
+    type: Literal["translation_partial"]
+    session_id: str
+    chunk_id: int
+    text: str
+
+class TranslationStableMessage(BaseModel):
+    type: Literal["translation_stable"]
+    session_id: str
+    text: str
+
 class TranslationMessage(BaseModel):
+    """Deprecated: legacy single-phase translation."""
+
     type: Literal["translation"]
     session_id: str
     text: str
@@ -362,11 +409,12 @@ class SummaryResponse(BaseModel):
 4. **Server:** Her chunk için:
     - Whisper → transcript
     - Merger → `transcript_partial` + gerektiğinde `transcript_stable`
-    - Çeviri → `translation`
+    - Çeviri → `translation_partial` (overwrite) + finalize olunca `translation_stable`
 5. **Client:**
     - `transcript_partial` → UI’da unstable text
     - `transcript_stable` → stable transcript’e append
-    - `translation` → translation text’e append
+    - `translation_partial` → translation preview’u overwrite et
+    - `translation_stable` → stable translation’a append + preview’u temizle
 6. **Client:** Kullanıcı "End Meeting"e basar → `end_session` mesajı gönder.
 7. **Client:** Toplanan `stableTranscript` string’ini `/summary` endpoint’ine POST eder.
 8. **Server:** GPT ile summary üretir → `SummaryResponse` döner.
@@ -395,3 +443,5 @@ class SummaryResponse(BaseModel):
     - WebSocket: `audio_chunk`, `end_session`, `transcript_partial`, `transcript_stable`, `translation`, `error`
     - HTTP: `POST /summary`
     - Internal models: `SessionState`, Summary models
+- **v0.2** – Translation streaming split into partial/stable
+    - WebSocket: adds `translation_partial` + `translation_stable`; `translation` deprecated for backward compatibility
