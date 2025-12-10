@@ -116,9 +116,52 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                     )
                     logger.debug(f"Sending transcript_partial to client: chunk_id={partial_msg.chunk_id}, text='{partial_msg.text[:50]}...'")
                     await websocket.send_json(partial_msg.model_dump())
-                
+
+                    # Translate partial transcript for real-time display
+                    partial_text = partial_msg.text.strip()
+                    if partial_text:
+                        try:
+                            translated_partial = await translate_segment(
+                                partial_text,
+                                source_lang=DEFAULT_SOURCE_LANG,
+                                target_lang=DEFAULT_TARGET_LANG
+                            )
+                            translated_partial = translated_partial.strip() if translated_partial else ""
+
+                            if translated_partial:
+                                previous_partial = session_state.partial_translation
+                                if previous_partial and translated_partial.startswith(previous_partial):
+                                    incremental_translation = translated_partial[len(previous_partial):].lstrip()
+                                else:
+                                    incremental_translation = translated_partial
+
+                                session_state.partial_translation = translated_partial
+
+                                if incremental_translation:
+                                    translation_msg = TranslationMessage(
+                                        type="translation",
+                                        session_id=session_id,
+                                        text=incremental_translation
+                                    )
+                                    logger.debug(
+                                        "Sending incremental partial translation to client "
+                                        f"(len={len(incremental_translation)})"
+                                    )
+                                    await websocket.send_json(translation_msg.model_dump())
+
+                            await session_manager.update(session_id, session_state)
+                        except Exception as e:
+                            logger.error(f"Translation failed for partial segment: {str(e)}", exc_info=True)
+                            await _send_error(
+                                websocket,
+                                session_id,
+                                f"Translation failed: {str(e)}",
+                                code="TRANSLATION_ERROR"
+                            )
+
                 elif event_type == "transcript_stable":
                     stable_text = data.get("text", "")
+                    full_stable_text = data.get("full_text")
                     logger.info(f"Event callback received transcript_stable (incremental): '{stable_text[:100]}...'")
                     if stable_text:
                         stable_msg = TranscriptStableMessage(
@@ -128,40 +171,71 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                         )
                         logger.debug(f"Sending transcript_stable to client: '{stable_text[:100]}...'")
                         await websocket.send_json(stable_msg.model_dump())
-                        
-                        # Update session state with stable transcript (incremental append)
-                        session_state.full_transcript += " " + stable_text if session_state.full_transcript else stable_text
-                        await session_manager.update(session_id, session_state)
-                        
-                        # Translate ONLY the new incremental segment (not the full buffer)
-                        # This reduces token usage and latency significantly
+
+                        # Update session state with stable transcript, allowing corrections from ElevenLabs
+                        if full_stable_text:
+                            # ElevenLabs may revise previous segments; trust the provided full text when available
+                            if session_state.full_transcript and full_stable_text.startswith(session_state.full_transcript):
+                                incremental_stable = full_stable_text[len(session_state.full_transcript):].lstrip()
+                            else:
+                                incremental_stable = None  # treat as corrected full transcript
+
+                            session_state.full_transcript = full_stable_text
+                        else:
+                            incremental_stable = stable_text
+                            session_state.full_transcript += " " + stable_text if session_state.full_transcript else stable_text
+
+                        # Refresh translation using stable transcript (and clear partial state)
                         try:
                             logger.info(
-                                f"Translating stable segment for session {session_id} "
-                                f"({len(stable_text)} chars) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
+                                f"Translating stable transcript for session {session_id} "
+                                f"({len(session_state.full_transcript)} chars total) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
                             )
-                            translated_text = await translate_segment(
-                                stable_text,  # This is already the incremental new part
-                                source_lang=DEFAULT_SOURCE_LANG,
-                                target_lang=DEFAULT_TARGET_LANG
-                            )
-                            
-                            if not translated_text or not translated_text.strip():
-                                logger.warning(
-                                    f"Translation empty for session {session_id}; falling back to source text"
+
+                            translation_increment = ""
+                            if incremental_stable is not None and session_state.stable_translation:
+                                # Append-only update
+                                translated_increment = await translate_segment(
+                                    incremental_stable,
+                                    source_lang=DEFAULT_SOURCE_LANG,
+                                    target_lang=DEFAULT_TARGET_LANG
                                 )
-                                translated_text = stable_text
-                            
-                            translation_msg = TranslationMessage(
-                                type="translation",
-                                session_id=session_id,
-                                text=translated_text
-                            )
-                            logger.info(
-                                f"Sending translation to client (incremental): '{translated_text[:100]}...'"
-                            )
-                            await websocket.send_json(translation_msg.model_dump())
-                        
+                                translated_increment = translated_increment.strip() if translated_increment else ""
+                                if translated_increment:
+                                    translation_increment = translated_increment
+                                    session_state.stable_translation = " ".join(
+                                        filter(None, [session_state.stable_translation, translated_increment])
+                                    ).strip()
+                            else:
+                                # Full retranslation to capture revisions
+                                retranslated_full = await translate_segment(
+                                    session_state.full_transcript,
+                                    source_lang=DEFAULT_SOURCE_LANG,
+                                    target_lang=DEFAULT_TARGET_LANG
+                                )
+                                retranslated_full = retranslated_full.strip() if retranslated_full else ""
+                                if retranslated_full:
+                                    if retranslated_full.startswith(session_state.stable_translation):
+                                        translation_increment = retranslated_full[len(session_state.stable_translation):].lstrip()
+                                    else:
+                                        translation_increment = retranslated_full
+                                    session_state.stable_translation = retranslated_full
+
+                            session_state.partial_translation = ""
+                            if translation_increment:
+                                translation_msg = TranslationMessage(
+                                    type="translation",
+                                    session_id=session_id,
+                                    text=translation_increment
+                                )
+                                logger.info(
+                                    f"Sending translation increment to client (len={len(translation_increment)}): "
+                                    f"'{translation_increment[:100]}...'"
+                                )
+                                await websocket.send_json(translation_msg.model_dump())
+
+                            await session_manager.update(session_id, session_state)
+
                         except Exception as e:
                             logger.error(f"Translation failed for segment: {str(e)}", exc_info=True)
                             await _send_error(

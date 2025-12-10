@@ -71,4 +71,6 @@ class SessionState(BaseModel):
     tail_words: List[str] = Field(default_factory=list)
     buffer_unstable: str = ""
     full_transcript: str = ""  # accumulated stable transcript (from ElevenLabs committed_transcript events)
+    stable_translation: str = ""  # accumulated stable translation text
+    partial_translation: str = ""  # latest partial translation for the current unstable segment
 
