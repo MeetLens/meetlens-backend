@@ -198,7 +198,8 @@ class ElevenLabsRealtimeSession:
                     if new_text and len(new_text.strip()) > 0:
                         logger.info(f"Sending incremental stable from committed_transcript: '{new_text[:100]}...'")
                         await self.event_callback("transcript_stable", {
-                            "text": new_text
+                            "text": new_text,
+                            "full_text": text
                         })
                         # Update last_committed_text to FULL current text for next diff
                         self._last_committed_text = text
