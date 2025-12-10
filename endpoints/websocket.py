@@ -126,22 +126,28 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                 source_lang=DEFAULT_SOURCE_LANG,
                                 target_lang=DEFAULT_TARGET_LANG
                             )
+                            translated_partial = translated_partial.strip() if translated_partial else ""
 
-                            session_state.partial_translation = translated_partial or ""
-                            combined_translation = " ".join(
-                                filter(None, [session_state.stable_translation, session_state.partial_translation])
-                            ).strip()
+                            if translated_partial:
+                                previous_partial = session_state.partial_translation
+                                if previous_partial and translated_partial.startswith(previous_partial):
+                                    incremental_translation = translated_partial[len(previous_partial):].lstrip()
+                                else:
+                                    incremental_translation = translated_partial
 
-                            if combined_translation:
-                                translation_msg = TranslationMessage(
-                                    type="translation",
-                                    session_id=session_id,
-                                    text=combined_translation
-                                )
-                                logger.debug(
-                                    f"Sending partial translation to client (combined length: {len(combined_translation)})"
-                                )
-                                await websocket.send_json(translation_msg.model_dump())
+                                session_state.partial_translation = translated_partial
+
+                                if incremental_translation:
+                                    translation_msg = TranslationMessage(
+                                        type="translation",
+                                        session_id=session_id,
+                                        text=incremental_translation
+                                    )
+                                    logger.debug(
+                                        "Sending incremental partial translation to client "
+                                        f"(len={len(incremental_translation)})"
+                                    )
+                                    await websocket.send_json(translation_msg.model_dump())
 
                             await session_manager.update(session_id, session_state)
                         except Exception as e:
@@ -186,6 +192,7 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                 f"({len(session_state.full_transcript)} chars total) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
                             )
 
+                            translation_increment = ""
                             if incremental_stable is not None and session_state.stable_translation:
                                 # Append-only update
                                 translated_increment = await translate_segment(
@@ -195,6 +202,7 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                 )
                                 translated_increment = translated_increment.strip() if translated_increment else ""
                                 if translated_increment:
+                                    translation_increment = translated_increment
                                     session_state.stable_translation = " ".join(
                                         filter(None, [session_state.stable_translation, translated_increment])
                                     ).strip()
@@ -205,18 +213,24 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                     source_lang=DEFAULT_SOURCE_LANG,
                                     target_lang=DEFAULT_TARGET_LANG
                                 )
-                                session_state.stable_translation = retranslated_full.strip() if retranslated_full else ""
+                                retranslated_full = retranslated_full.strip() if retranslated_full else ""
+                                if retranslated_full:
+                                    if retranslated_full.startswith(session_state.stable_translation):
+                                        translation_increment = retranslated_full[len(session_state.stable_translation):].lstrip()
+                                    else:
+                                        translation_increment = retranslated_full
+                                    session_state.stable_translation = retranslated_full
 
                             session_state.partial_translation = ""
-                            if session_state.stable_translation:
+                            if translation_increment:
                                 translation_msg = TranslationMessage(
                                     type="translation",
                                     session_id=session_id,
-                                    text=session_state.stable_translation
+                                    text=translation_increment
                                 )
                                 logger.info(
-                                    f"Sending translation to client (stable, length={len(session_state.stable_translation)}): "
-                                    f"'{session_state.stable_translation[:100]}...'"
+                                    f"Sending translation increment to client (len={len(translation_increment)}): "
+                                    f"'{translation_increment[:100]}...'"
                                 )
                                 await websocket.send_json(translation_msg.model_dump())
 
