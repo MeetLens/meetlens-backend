@@ -1,30 +1,19 @@
 """
-Summary Service using OpenAI GPT API.
+Summary Service using LiteLLM for multi-provider support.
 Generates structured meeting summaries with overview, action items, and decisions.
 """
 import os
 import json
 import re
 import logging
-from openai import APIError, APITimeoutError, OpenAI, RateLimitError
-from services.usage_tracker import usage_tracker
+from litellm import RateLimitError, Timeout as APITimeoutError
+from services.llm_service import complete_with_fallback
 from models.messages import SummaryBlock
 
 logger = logging.getLogger(__name__)
 
-# Lazy initialization of OpenAI client
-_client = None
-
-
-def _get_client() -> OpenAI:
-    """Get or create OpenAI client instance."""
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
-        _client = OpenAI(api_key=api_key)
-    return _client
+# Model can be overridden; default to a widely available, fast model
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gpt-5-nano")
 
 
 async def generate_summary(
@@ -32,26 +21,30 @@ async def generate_summary(
     language: str = None
 ) -> SummaryBlock:
     """
-    Generate structured summary from full transcript using GPT API.
-    
+    Generate structured summary from full transcript using LiteLLM.
+
     Args:
         full_transcript: Complete meeting transcript text
         language: Source language code (optional, for prompt context)
-    
+
     Returns:
         SummaryBlock with short_overview, action_items, and decisions
 
     Raises:
         ValueError: If input transcript is empty
-        APIError: If the OpenAI API returns an error response
-        RateLimitError: If request is rate limited (falls back to transcript overview)
-        APITimeoutError: If OpenAI request times out (falls back to transcript overview)
+        Exception: If the LLM API returns an unrecoverable error
+        Note: RateLimitError and APITimeoutError are handled gracefully with fallback
     """
-    import asyncio
-    
     if not full_transcript or not full_transcript.strip():
         raise ValueError("Full transcript cannot be empty")
-    
+
+    # Prepare fallback summary
+    fallback_summary = SummaryBlock(
+        short_overview=full_transcript.strip(),
+        action_items=[],
+        decisions=[],
+    )
+
     try:
         # Build structured prompt
         lang_context = f" (in {language})" if language else ""
@@ -69,31 +62,23 @@ Please provide a JSON response with the following structure:
 
 Return only valid JSON, no additional text."""
 
-        # Call GPT API (run sync call in executor to avoid blocking)
-        client = _get_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model="gpt-5-nano",
-                messages=[
-                    {"role": "system", "content": "You are a professional meeting assistant. Extract key information, action items, and decisions from meeting transcripts. Always return valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
-        )
-
-        usage_tracker.track_completion_response(
-            model=response.model,
-            response=response,
+        # Call LiteLLM with JSON response format
+        # Note: Not all providers support response_format, LiteLLM will handle gracefully
+        response_text = await complete_with_fallback(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a professional meeting assistant. Extract key information, action items, and decisions from meeting transcripts. Always return valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            model=SUMMARY_MODEL,
+            response_format={"type": "json_object"},
             request_name="summary",
+            fallback_text=None,  # We'll handle fallback manually to return SummaryBlock
         )
-        
-        # Parse JSON response
-        response_text = response.choices[0].message.content.strip()
 
-        # Try to parse as JSON
+        # Parse JSON response
         try:
             summary_dict = json.loads(response_text)
         except json.JSONDecodeError:
@@ -113,23 +98,13 @@ Return only valid JSON, no additional text."""
 
         return summary_block
 
-    except RateLimitError as e:
-        logger.warning("Summary generation rate limited; returning transcript fallback: %s", e)
-        return SummaryBlock(
-            short_overview=full_transcript.strip(),
-            action_items=[],
-            decisions=[],
+    except (RateLimitError, APITimeoutError) as e:
+        logger.warning(
+            "Summary generation %s; returning transcript fallback: %s",
+            "rate limited" if isinstance(e, RateLimitError) else "timed out",
+            e
         )
-    except APITimeoutError as e:
-        logger.warning("Summary generation timed out; returning transcript fallback: %s", e)
-        return SummaryBlock(
-            short_overview=full_transcript.strip(),
-            action_items=[],
-            decisions=[],
-        )
-    except APIError as e:
-        logger.error("Summary generation API error: %s", e)
-        raise
+        return fallback_summary
     except Exception as e:
         logger.error(f"Summary generation failed: {str(e)}")
         raise

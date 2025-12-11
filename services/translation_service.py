@@ -1,27 +1,13 @@
 """
-Translation Service using OpenAI GPT API.
+Translation Service using LiteLLM for multi-provider support.
 Translates stable transcript segments from source to target language.
 """
 import os
 import logging
-from openai import APIError, APITimeoutError, OpenAI, RateLimitError
-from services.usage_tracker import usage_tracker
+from litellm import RateLimitError, Timeout as APITimeoutError
+from services.llm_service import complete_with_fallback
 
 logger = logging.getLogger(__name__)
-
-# Lazy initialization of OpenAI client
-_client = None
-
-
-def _get_client() -> OpenAI:
-    """Get or create OpenAI client instance."""
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
-        _client = OpenAI(api_key=api_key)
-    return _client
 
 # Default languages (can be overridden via environment variables)
 DEFAULT_SOURCE_LANG = os.getenv("SOURCE_LANGUAGE", "en")
@@ -36,29 +22,26 @@ async def translate_segment(
     target_lang: str = None
 ) -> str:
     """
-    Translate a text segment using GPT API.
-    
+    Translate a text segment using LiteLLM.
+
     Args:
         text: Text to translate
         source_lang: Source language code (e.g., "en", "tr")
         target_lang: Target language code (e.g., "tr", "en")
-    
+
     Returns:
         Translated text string
 
     Raises:
-        APIError: If the OpenAI API returns an error response
-        RateLimitError: If request is rate limited (falls back to source text)
-        APITimeoutError: If OpenAI request times out (falls back to source text)
+        Exception: If the LLM API returns an unrecoverable error
+        Note: RateLimitError and APITimeoutError are handled gracefully with fallback
     """
-    import asyncio
-    
     if not text or not text.strip():
         return ""
-    
+
     source_lang = source_lang or DEFAULT_SOURCE_LANG
     target_lang = target_lang or DEFAULT_TARGET_LANG
-    
+
     try:
         # Build translation prompt
         prompt = (
@@ -66,42 +49,23 @@ async def translate_segment(
             f"Return only the translation, no explanations:\n\n{text}"
         )
 
-        # Call GPT API (run sync call in executor to avoid blocking)
-        client = _get_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model=TRANSLATION_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a professional translator. Translate accurately and naturally.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_completion_tokens=500,
-            )
+        # Call LiteLLM with fallback to source text on rate limit or timeout
+        translated_text = await complete_with_fallback(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a professional translator. Translate accurately and naturally.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            model=TRANSLATION_MODEL,
+            max_tokens=500,
+            request_name="translation",
+            fallback_text=text,  # Return source text on rate limit or timeout
         )
 
-        usage_tracker.track_completion_response(
-            model=TRANSLATION_MODEL,
-            response=response,
-            request_name="translation",
-        )
-        
-        translated_text = response.choices[0].message.content.strip()
         return translated_text
 
-    except RateLimitError as e:
-        logger.warning("Translation rate limited; returning source text fallback: %s", e)
-        return text
-    except APITimeoutError as e:
-        logger.warning("Translation request timed out; returning source text fallback: %s", e)
-        return text
-    except APIError as e:
-        logger.error("Translation API error: %s", e)
-        raise
     except Exception as e:
         logger.error(f"Translation failed: {str(e)}")
         raise
