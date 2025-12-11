@@ -21,13 +21,28 @@ class ModelPricing:
 
 
 # Pricing is stored per 1K tokens to simplify calculations.
-# Values are based on publicly available OpenAI pricing as of mid-2024.
+# Values are based on publicly available provider pricing as of late 2024/early 2025.
 DEFAULT_MODEL_PRICING: Dict[str, ModelPricing] = {
+    # OpenAI Models
     "gpt-5-nano": ModelPricing(input_per_1k=0.00005, output_per_1k=0.00015),
     "gpt-4.1-mini": ModelPricing(input_per_1k=0.00015, output_per_1k=0.0006),
     "gpt-4.1": ModelPricing(input_per_1k=0.005, output_per_1k=0.015),
     "gpt-4o-mini": ModelPricing(input_per_1k=0.00015, output_per_1k=0.0006),
     "gpt-4o": ModelPricing(input_per_1k=0.0025, output_per_1k=0.01),
+
+    # Claude Models (Anthropic)
+    "claude-3-5-sonnet-20241022": ModelPricing(input_per_1k=0.003, output_per_1k=0.015),
+    "claude-3-5-haiku-20241022": ModelPricing(input_per_1k=0.0008, output_per_1k=0.004),
+    "claude-3-opus": ModelPricing(input_per_1k=0.015, output_per_1k=0.075),
+    "claude-3-sonnet": ModelPricing(input_per_1k=0.003, output_per_1k=0.015),
+    "claude-3-haiku": ModelPricing(input_per_1k=0.00025, output_per_1k=0.00125),
+
+    # Gemini Models (Google)
+    "gemini/gemini-2.0-flash-exp": ModelPricing(input_per_1k=0.0, output_per_1k=0.0),  # Free tier
+    "gemini/gemini-1.5-pro": ModelPricing(input_per_1k=0.00125, output_per_1k=0.005),
+    "gemini/gemini-1.5-flash": ModelPricing(input_per_1k=0.000075, output_per_1k=0.0003),
+    "gemini-1.5-pro": ModelPricing(input_per_1k=0.00125, output_per_1k=0.005),
+    "gemini-1.5-flash": ModelPricing(input_per_1k=0.000075, output_per_1k=0.0003),
 }
 
 
