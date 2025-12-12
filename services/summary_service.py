@@ -7,6 +7,7 @@ import json
 import re
 import logging
 from litellm import RateLimitError, Timeout as APITimeoutError
+from services.llm_config import SUMMARY_SERVICE_KEY
 from services.llm_service import complete_with_fallback
 from models.messages import SummaryBlock
 
@@ -76,6 +77,7 @@ Return only valid JSON, no additional text."""
             response_format={"type": "json_object"},
             request_name="summary",
             fallback_text=None,  # We'll handle fallback manually to return SummaryBlock
+            service_key=SUMMARY_SERVICE_KEY,
         )
 
         # Parse JSON response
