@@ -4,6 +4,7 @@ Translates stable transcript segments from source to target language.
 """
 import os
 import logging
+from typing import Optional
 from services.llm_config import TRANSLATION_SERVICE_KEY
 from services.llm_service import complete_with_fallback
 
@@ -12,14 +13,12 @@ logger = logging.getLogger(__name__)
 # Default languages (can be overridden via environment variables)
 DEFAULT_SOURCE_LANG = os.getenv("SOURCE_LANGUAGE", "en")
 DEFAULT_TARGET_LANG = os.getenv("TARGET_LANGUAGE", "tr")
-# Model can be overridden; default to a widely available, fast model
-TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-4.1-mini")
-
 
 async def translate_segment(
     text: str,
     source_lang: str = None,
-    target_lang: str = None
+    target_lang: str = None,
+    model: Optional[str] = None,
 ) -> str:
     """
     Translate a text segment using LiteLLM.
@@ -28,6 +27,7 @@ async def translate_segment(
         text: Text to translate
         source_lang: Source language code (e.g., "en", "tr")
         target_lang: Target language code (e.g., "tr", "en")
+        model: Optional model override; defaults to translation service configuration
 
     Returns:
         Translated text string
@@ -58,7 +58,7 @@ async def translate_segment(
                 },
                 {"role": "user", "content": prompt},
             ],
-            model=TRANSLATION_MODEL,
+            model=model,
             max_tokens=500,
             request_name="translation",
             fallback_text=text,  # Return source text on rate limit or timeout

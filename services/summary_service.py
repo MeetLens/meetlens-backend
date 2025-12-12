@@ -2,10 +2,10 @@
 Summary Service using LiteLLM for multi-provider support.
 Generates structured meeting summaries with overview, action items, and decisions.
 """
-import os
 import json
 import re
 import logging
+from typing import Optional
 from litellm import RateLimitError, Timeout as APITimeoutError
 from services.llm_config import SUMMARY_SERVICE_KEY
 from services.llm_service import complete_with_fallback
@@ -13,13 +13,10 @@ from models.messages import SummaryBlock
 
 logger = logging.getLogger(__name__)
 
-# Model can be overridden; default to a widely available, fast model
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gpt-5-nano")
-
-
 async def generate_summary(
     full_transcript: str,
-    language: str = None
+    language: str = None,
+    model: Optional[str] = None,
 ) -> SummaryBlock:
     """
     Generate structured summary from full transcript using LiteLLM.
@@ -27,6 +24,7 @@ async def generate_summary(
     Args:
         full_transcript: Complete meeting transcript text
         language: Source language code (optional, for prompt context)
+        model: Optional model override; defaults to summary service configuration
 
     Returns:
         SummaryBlock with short_overview, action_items, and decisions
@@ -73,7 +71,7 @@ Return only valid JSON, no additional text."""
                 },
                 {"role": "user", "content": prompt},
             ],
-            model=SUMMARY_MODEL,
+            model=model,
             response_format={"type": "json_object"},
             request_name="summary",
             fallback_text=None,  # We'll handle fallback manually to return SummaryBlock
