@@ -4,7 +4,7 @@ Translates stable transcript segments from source to target language.
 """
 import os
 import logging
-from litellm import RateLimitError, Timeout as APITimeoutError
+from services.llm_config import TRANSLATION_SERVICE_KEY
 from services.llm_service import complete_with_fallback
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ async def translate_segment(
             max_tokens=500,
             request_name="translation",
             fallback_text=text,  # Return source text on rate limit or timeout
+            service_key=TRANSLATION_SERVICE_KEY,
         )
 
         return translated_text
