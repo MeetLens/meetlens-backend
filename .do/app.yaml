@@ -1,0 +1,41 @@
+name: meetlens-backend
+region: nyc
+
+services:
+  - name: api
+    github:
+      repo: MeetLens/meetlens-backend
+      branch: main
+      deploy_on_push: true
+
+    run_command: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
+
+    environment_slug: python
+
+    http_port: 8080
+
+    health_check:
+      http_path: /
+      initial_delay_seconds: 10
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+
+    envs:
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: "" # Set this in DigitalOcean dashboard or via CLI
+
+      - key: ELEVENLABS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: "" # Set this in DigitalOcean dashboard or via CLI
+
+      - key: PORT
+        scope: RUN_TIME
+        value: "8080"
+
+    instance_count: 1
+    instance_size_slug: basic-xxs

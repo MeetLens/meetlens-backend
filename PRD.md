@@ -1,0 +1,1082 @@
+# Product Requirements Document: MeetLens Backend
+
+**Version:** 1.0
+**Date:** December 12, 2024
+**Status:** Implemented
+**Platform:** DigitalOcean App Platform (Python/FastAPI)
+
+---
+
+## Executive Summary
+
+MeetLens Backend is a production-ready FastAPI application that provides **real-time meeting transcription, translation, and AI-powered summarization** services for globally distributed teams conducting multilingual meetings. The system enables seamless collaboration through live speech-to-text conversion (powered by ElevenLabs Scribe v2), asynchronous multi-language translation (OpenAI GPT), and intelligent meeting summaries with action items and decisions.
+
+**Key Value Propositions:**
+- Real-time audio transcription with sub-second latency
+- Live multi-language translation for meeting participants
+- AI-generated structured summaries with actionable insights
+- WebSocket-based streaming for immediate feedback
+- Scalable architecture ready for production deployment
+
+---
+
+## Product Overview
+
+### Target Users
+- **Meeting Organizers**: Schedule and manage multilingual meetings
+- **Meeting Participants**: Receive real-time transcriptions and translations
+- **Application Integrators**: Developers building on top of MeetLens API
+
+### Core Capabilities
+
+1. **Real-Time Transcription** (`/ws/transcribe`)
+   - WebSocket endpoint for bidirectional audio streaming
+   - Accepts PCM audio chunks (16kHz, mono, 16-bit)
+   - Returns partial (interim) and stable (finalized) transcripts
+   - Powered by ElevenLabs Scribe v2 Realtime API
+
+2. **Live Translation** (Integrated in WebSocket flow)
+   - Translates transcripts in real-time
+   - Supports both partial (streaming) and stable (finalized) translations
+   - Configurable source/target languages (default: en → tr)
+   - Powered by OpenAI GPT-4.1-mini
+
+3. **Meeting Summaries** (`POST /summary`)
+   - Generates structured summaries from full transcripts
+   - Extracts short overview, action items, and decisions
+   - Supports multiple languages
+   - Powered by OpenAI GPT-5-nano
+
+4. **Session Management**
+   - Maintains per-session state for transcript accumulation
+   - In-memory storage (can be extended to Redis)
+   - Thread-safe async operations
+
+---
+
+## System Architecture
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Application                        │
+│                    (Flutter / Web / Mobile)                      │
+└───────────────────┬─────────────────────┬───────────────────────┘
+                    │                     │
+            WebSocket Connection      HTTP POST
+        (/ws/transcribe)              (/summary)
+                    │                     │
+┌───────────────────▼─────────────────────▼───────────────────────┐
+│                      FastAPI Application                         │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              WebSocket Endpoint Handler                  │   │
+│  │         (endpoints/websocket.py)                         │   │
+│  └────┬──────────────────────────────────────────────┬──────┘   │
+│       │                                              │           │
+│  ┌────▼─────────────┐                         ┌─────▼────────┐ │
+│  │ Session Manager  │                         │  Translation  │ │
+│  │   (In-Memory)    │                         │   Service     │ │
+│  └──────────────────┘                         └──────────────┘ │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │           ElevenLabs Session Manager                       │ │
+│  │   (Manages WebSocket connections to ElevenLabs)           │ │
+│  └────────────────────┬──────────────────────────────────────┘ │
+└───────────────────────┼───────────────────────────────────────┐
+                        │                                        │
+            ┌───────────▼──────────┐              ┌─────────────▼──────────┐
+            │   ElevenLabs API     │              │     OpenAI API         │
+            │  (Scribe v2 Realtime)│              │  (GPT Translation      │
+            │   Speech-to-Text     │              │   & Summarization)     │
+            └──────────────────────┘              └────────────────────────┘
+```
+
+### Component Breakdown
+
+| Component | File Path | Responsibility |
+|-----------|-----------|----------------|
+| **Main Application** | `main.py` | FastAPI app initialization, CORS, routes |
+| **WebSocket Endpoint** | `endpoints/websocket.py` | Handle `/ws/transcribe`, route audio chunks |
+| **Session Manager** | `services/session_manager.py` | Maintain per-session state (in-memory) |
+| **ElevenLabs Service** | `services/elevenlabs_service.py` | WebSocket client for ElevenLabs STT |
+| **Translation Service** | `services/translation_service.py` | OpenAI GPT translation (async) |
+| **Summary Service** | `services/summary_service.py` | OpenAI GPT summary generation |
+| **Whisper Service** | `services/whisper_service.py` | OpenAI Whisper API (legacy/fallback) |
+| **Usage Tracker** | `services/usage_tracker.py` | Track OpenAI API usage metrics |
+| **Message Models** | `models/messages.py` | Pydantic models for all messages |
+
+---
+
+## Technical Stack
+
+### Runtime & Framework
+- **Python**: 3.9+
+- **FastAPI**: 0.123.10 (ASGI web framework)
+- **Uvicorn**: ASGI server
+- **WebSockets**: 12.0 (WebSocket client/server)
+
+### AI/LLM Services
+- **ElevenLabs Scribe v2 Realtime**: Real-time speech-to-text transcription
+- **OpenAI GPT-4.1-mini**: Translation service
+- **OpenAI GPT-5-nano**: Summary generation
+- **OpenAI Whisper-1**: Audio transcription (legacy/fallback)
+
+### Core Dependencies
+```
+fastapi==0.123.10
+openai==2.9.0
+websockets==12.0
+python-dotenv==1.2.1
+pydantic (via FastAPI)
+```
+
+### Deployment Target
+- **Platform**: DigitalOcean App Platform
+- **Region**: NYC (configurable)
+- **Instance**: basic-xxs (1 instance)
+- **Port**: 8080
+- **Health Check**: `GET /`
+
+---
+
+## API Specification
+
+### REST Endpoints
+
+#### 1. Health Check
+
+**Endpoint:** `GET /`
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "MeetLens Backend",
+  "version": "0.1.0"
+}
+```
+
+#### 2. Generate Meeting Summary
+
+**Endpoint:** `POST /summary`
+
+**Request Body:**
+```json
+{
+  "session_id": "string (UUID recommended)",
+  "full_transcript": "string (required, non-empty)",
+  "language": "string (optional, e.g., 'en', 'tr')"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "summary": {
+    "short_overview": "Brief 2-5 sentence overview of the meeting",
+    "action_items": [
+      "Action item 1",
+      "Action item 2"
+    ],
+    "decisions": [
+      "Decision 1",
+      "Decision 2"
+    ]
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Empty transcript or validation error
+- `500 Internal Server Error`: AI processing failure
+
+---
+
+### WebSocket Protocol
+
+#### Connection
+
+**Endpoint:** `ws://[host]/ws/transcribe`
+
+**Connection Flow:**
+1. Client connects to WebSocket endpoint
+2. Server accepts connection
+3. Client sends audio chunks and session control messages
+4. Server streams transcription and translation events
+5. Client ends session when meeting concludes
+
+---
+
+#### Client → Server Messages
+
+##### 1. Audio Chunk Message
+
+Sent continuously during active audio recording.
+
+```json
+{
+  "type": "audio_chunk",
+  "session_id": "string (UUID)",
+  "chunk_id": "integer (sequential)",
+  "audio_format": "pcm_s16le_16k_mono",
+  "data": "base64-encoded audio bytes"
+}
+```
+
+**Audio Format Requirements:**
+- **Encoding**: PCM signed 16-bit little-endian
+- **Sample Rate**: 16kHz
+- **Channels**: Mono
+- **Sample Width**: 2 bytes (16-bit)
+
+##### 2. End Session Message
+
+Sent when meeting ends or user stops recording.
+
+```json
+{
+  "type": "end_session",
+  "session_id": "string (UUID)"
+}
+```
+
+---
+
+#### Server → Client Messages
+
+##### 1. Transcript Partial (Interim)
+
+Streaming partial transcription for real-time display.
+
+```json
+{
+  "type": "transcript_partial",
+  "session_id": "string",
+  "chunk_id": "integer",
+  "text": "partial transcription text..."
+}
+```
+
+**Behavior:**
+- Sent continuously as speech is detected
+- Text may be revised in subsequent partial messages
+- Not guaranteed to be final
+- Use for live captions
+
+##### 2. Transcript Stable (Finalized)
+
+Committed transcription segment (will not change).
+
+```json
+{
+  "type": "transcript_stable",
+  "session_id": "string",
+  "text": "finalized transcription segment"
+}
+```
+
+**Behavior:**
+- Sent when ElevenLabs commits a transcript segment
+- Text is final and won't be revised
+- Incremental (only new text since last stable message)
+- Accumulate for full transcript
+
+##### 3. Translation Partial (Interim)
+
+Streaming partial translation for real-time display.
+
+```json
+{
+  "type": "translation_partial",
+  "session_id": "string",
+  "chunk_id": "integer",
+  "text": "partial translation text..."
+}
+```
+
+**Behavior:**
+- Async translation of partial transcripts
+- May be revised as partial transcript updates
+- Incremental (only new translated text)
+- Use for live translated captions
+
+##### 4. Translation Stable (Finalized)
+
+Committed translation segment (based on stable transcript).
+
+```json
+{
+  "type": "translation_stable",
+  "session_id": "string",
+  "text": "finalized translation segment"
+}
+```
+
+**Behavior:**
+- Sent after stable transcript is translated
+- Text is final (unless full retranslation occurs)
+- Incremental (only new text since last stable translation)
+- Accumulate for full translated transcript
+
+##### 5. Error Message
+
+Error notification during transcription/translation.
+
+```json
+{
+  "type": "error",
+  "session_id": "string",
+  "message": "Error description",
+  "code": "ERROR_CODE (optional)"
+}
+```
+
+**Common Error Codes:**
+- `ELEVENLABS_ERROR`: ElevenLabs API error
+- `ELEVENLABS_SEND_ERROR`: Failed to send audio to ElevenLabs
+- `ELEVENLABS_CONNECTION_ERROR`: WebSocket connection failure
+- `TRANSLATION_ERROR`: Translation service failure
+
+---
+
+## Data Models
+
+### Session State (Internal)
+
+Maintains per-session state throughout a meeting.
+
+```python
+class SessionState(BaseModel):
+    session_id: str
+    last_stable_text: str = ""
+    tail_words: List[str] = []
+    buffer_unstable: str = ""
+    full_transcript: str = ""  # Accumulated stable transcript
+    stable_translation: str = ""  # Accumulated stable translation
+    partial_translation: str = ""  # Latest partial translation
+```
+
+**Lifecycle:**
+1. Created on first `audio_chunk` for session
+2. Updated as transcription progresses
+3. Finalized on `end_session`
+4. Persisted in-memory (can be extended to Redis)
+
+---
+
+## Service Components
+
+### 1. ElevenLabs Session Manager
+
+**Purpose:** Manages WebSocket connections to ElevenLabs Scribe v2 API.
+
+**Key Features:**
+- One WebSocket connection per MeetLens session
+- Handles connection lifecycle (connect, send audio, receive events, close)
+- Event mapping: ElevenLabs events → MeetLens message types
+- Automatic reconnection on disconnect (future enhancement)
+
+**Event Mapping:**
+
+| ElevenLabs Event | MeetLens Message | Description |
+|------------------|------------------|-------------|
+| `partial_transcript` | `transcript_partial` | Interim transcription |
+| `committed_transcript` | `transcript_stable` | Finalized segment |
+| `error` | `error` | Error notification |
+
+**WebSocket URL:**
+```
+wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime
+```
+
+**Authentication:**
+- Header: `xi-api-key: <ELEVENLABS_API_KEY>`
+
+---
+
+### 2. Translation Service
+
+**Purpose:** Translate transcription segments using OpenAI GPT.
+
+**Key Features:**
+- Async processing (doesn't block transcription pipeline)
+- Incremental translation updates
+- Fallback to source text on rate limit/timeout
+- Usage tracking for cost monitoring
+
+**Translation Flow:**
+
+1. **Partial Translation:**
+   - Triggered on `transcript_partial` events
+   - Translates interim transcription
+   - Sends incremental `translation_partial` messages
+   - Runs asynchronously via `asyncio.create_task()`
+
+2. **Stable Translation:**
+   - Triggered on `transcript_stable` events
+   - Translates finalized transcription segments
+   - Sends incremental `translation_stable` messages
+   - Handles full retranslation if corrections detected
+
+**Configuration (Environment Variables):**
+```bash
+SOURCE_LANGUAGE=en  # Default source language
+TARGET_LANGUAGE=tr  # Default target language
+TRANSLATION_MODEL=gpt-4.1-mini  # OpenAI model
+```
+
+---
+
+### 3. Summary Service
+
+**Purpose:** Generate structured meeting summaries using OpenAI GPT.
+
+**Key Features:**
+- Extracts short overview (2-5 sentences)
+- Identifies action items
+- Captures key decisions
+- JSON-structured output
+- Fallback to transcript on error
+
+**Prompt Template:**
+```
+Analyze the following meeting transcript and provide a structured summary.
+
+Transcript:
+{full_transcript}
+
+Please provide a JSON response with the following structure:
+{
+    "short_overview": "A brief 2-5 sentence overview of the meeting",
+    "action_items": ["Action item 1", "Action item 2", ...],
+    "decisions": ["Decision 1", "Decision 2", ...]
+}
+
+Return only valid JSON, no additional text.
+```
+
+**Model:** `gpt-5-nano` (configurable)
+
+---
+
+### 4. Session Manager
+
+**Purpose:** Maintain per-session state across the meeting lifecycle.
+
+**Key Features:**
+- In-memory storage (Dict[session_id, SessionState])
+- Thread-safe async operations (using `asyncio.Lock`)
+- Get-or-create pattern
+- Session finalization on end_session
+
+**Operations:**
+- `get_or_create(session_id)`: Get or initialize session state
+- `get(session_id)`: Retrieve existing session
+- `update(session_id, state)`: Update session state
+- `finalize(session_id)`: Mark session as ended
+
+**Future Enhancements:**
+- Redis backend for persistence
+- Session expiration/cleanup
+- Multi-instance support
+
+---
+
+### 5. Usage Tracker
+
+**Purpose:** Monitor OpenAI API usage and costs.
+
+**Key Features:**
+- Tracks completion tokens, prompt tokens, total tokens
+- Per-request tracking with request name labels
+- Cost estimation (if pricing data available)
+- Logging for audit trails
+
+**Usage:**
+```python
+usage_tracker.track_completion_response(
+    model="gpt-4.1-mini",
+    response=openai_response,
+    request_name="translation"
+)
+```
+
+---
+
+## WebSocket Event Flow
+
+### Typical Session Flow
+
+```
+1. Client connects to ws://host/ws/transcribe
+2. Server accepts connection
+
+3. Client sends audio_chunk (chunk_id=1)
+4. Server forwards to ElevenLabs
+5. ElevenLabs returns partial_transcript
+6. Server sends transcript_partial to client
+7. Server triggers async translation
+8. Server sends translation_partial to client
+
+9. Client sends audio_chunk (chunk_id=2)
+10. [Repeat 4-8]
+
+11. ElevenLabs commits segment
+12. Server receives committed_transcript
+13. Server sends transcript_stable to client
+14. Server triggers async stable translation
+15. Server sends translation_stable to client
+
+16. [Continue for duration of meeting]
+
+17. Client sends end_session
+18. Server closes ElevenLabs connection
+19. Server finalizes session state
+20. Server keeps session state for /summary call
+
+21. Client calls POST /summary
+22. Server generates summary and returns result
+```
+
+---
+
+## Translation Processing Details
+
+### Partial Translation (Real-Time)
+
+**Trigger:** `transcript_partial` event from ElevenLabs
+
+**Processing:**
+1. Extract partial transcript text
+2. Async task: `process_partial_translation(text)`
+3. Call OpenAI translation API
+4. Calculate incremental translation (diff from previous partial)
+5. Send `translation_partial` message with incremental text
+6. Update `session_state.partial_translation`
+
+**Incremental Logic:**
+- If new translation starts with previous partial, extract suffix
+- Send only the new portion to avoid duplicate text
+- Client accumulates incremental updates
+
+---
+
+### Stable Translation (Finalized)
+
+**Trigger:** `transcript_stable` event from ElevenLabs
+
+**Processing:**
+1. Extract stable transcript text
+2. Async task: `process_stable_translation()`
+3. Decide: incremental or full retranslation
+   - **Incremental:** If ElevenLabs provides only new segment
+   - **Full:** If ElevenLabs provides full corrected text
+4. Call OpenAI translation API
+5. Calculate incremental translation (diff from previous stable)
+6. Send `translation_stable` message with incremental text
+7. Update `session_state.stable_translation`
+8. Clear `session_state.partial_translation`
+
+**Correction Handling:**
+- ElevenLabs may revise previous segments
+- If full_text doesn't start with previous stable, retranslate all
+- Send incremental portion to client
+
+---
+
+## Environment Configuration
+
+### Required Environment Variables
+
+```bash
+# OpenAI API (Required)
+OPENAI_API_KEY=sk-...
+
+# ElevenLabs API (Required)
+ELEVENLABS_API_KEY=...
+
+# Optional Configuration
+SOURCE_LANGUAGE=en          # Default: en
+TARGET_LANGUAGE=tr          # Default: tr
+TRANSLATION_MODEL=gpt-4.1-mini  # Default: gpt-4.1-mini
+PORT=8080                   # Default: 8080
+```
+
+### DigitalOcean App Platform Configuration
+
+**Environment Variables (Secrets):**
+- `OPENAI_API_KEY`: (Secret)
+- `ELEVENLABS_API_KEY`: (Secret)
+- `PORT`: 8080
+
+**Build Settings:**
+- **Runtime**: Python 3.9+
+- **Build Command**: (none, uses Procfile)
+- **Run Command**: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}`
+
+**Health Check:**
+- **Path**: `/`
+- **Port**: 8080
+- **Initial Delay**: 10s
+- **Period**: 10s
+- **Timeout**: 5s
+
+---
+
+## Deployment
+
+### DigitalOcean App Platform (Current)
+
+**Configuration File:** `.do/app.yaml`
+
+```yaml
+name: meetlens-backend
+region: nyc
+
+services:
+  - name: api
+    github:
+      repo: MeetLens/meetlens-backend
+      branch: main
+      deploy_on_push: true
+
+    run_command: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
+    environment_slug: python
+    http_port: 8080
+
+    health_check:
+      http_path: /
+      initial_delay_seconds: 10
+      period_seconds: 10
+
+    envs:
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: ELEVENLABS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+    instance_count: 1
+    instance_size_slug: basic-xxs
+```
+
+**Deployment Steps:**
+
+1. **Via Web UI:**
+   - Navigate to DigitalOcean App Platform dashboard
+   - Create App → Connect GitHub repo
+   - Configure environment variables
+   - Deploy
+
+2. **Via CLI (if `doctl` installed):**
+   ```bash
+   doctl apps create --spec .do/app.yaml
+   doctl apps list
+   doctl apps logs <app-id>
+   ```
+
+---
+
+## Error Handling & Resilience
+
+### OpenAI API Errors
+
+**Rate Limiting:**
+- Translation: Falls back to source text
+- Summary: Falls back to transcript as overview
+- Logged as warnings, not errors
+
+**Timeouts:**
+- Same fallback behavior as rate limiting
+- Client receives partial results
+
+**API Errors:**
+- Logged as errors
+- Sent to client as `error` messages
+- HTTP 500 response for REST endpoints
+
+### ElevenLabs API Errors
+
+**Connection Failures:**
+- Logged and sent to client as `ELEVENLABS_CONNECTION_ERROR`
+- Session remains in failed state
+- Client should reconnect
+
+**Transcription Errors:**
+- "Insufficient audio activity" errors are suppressed (non-critical)
+- Other errors forwarded to client
+
+**WebSocket Disconnects:**
+- Logged as info (expected on client disconnect)
+- Sessions cleaned up automatically
+
+---
+
+## Performance & Scalability
+
+### Current Limitations (MVP)
+
+- **In-Memory State**: Session state not persisted across restarts
+- **Single Instance**: No horizontal scaling support yet
+- **No Load Balancing**: Single instance deployment
+
+### Performance Characteristics
+
+- **Transcription Latency**: Sub-second (ElevenLabs Scribe v2)
+- **Translation Latency**: 1-3 seconds (async, non-blocking)
+- **Summary Generation**: 3-10 seconds (depends on transcript length)
+- **WebSocket Concurrency**: FastAPI async handles multiple connections
+
+### Future Scalability Enhancements
+
+1. **Redis Session Storage**
+   - Replace in-memory `SessionManager` with Redis backend
+   - Enable multi-instance deployments
+   - Persist sessions across restarts
+
+2. **Load Balancing**
+   - Deploy multiple app instances
+   - Use DigitalOcean Load Balancer
+   - Sticky sessions for WebSocket connections
+
+3. **Database Integration**
+   - Store meeting transcripts/translations
+   - Enable historical queries
+   - Support analytics
+
+4. **Message Queue**
+   - Queue translation tasks
+   - Decouple translation from transcription
+   - Retry failed translations
+
+---
+
+## Testing
+
+### Test Coverage
+
+**Unit Tests:**
+- `test_session_state.py`: Session state management
+- `test_transcript_merger.py`: Transcript merging logic
+- `test_summary_endpoint.py`: Summary generation endpoint
+- `test_usage_tracker.py`: OpenAI usage tracking
+- `test_ws_transcribe.py`: WebSocket message handling
+
+**Integration Tests:**
+- `test_integration_mvp.py`: End-to-end WebSocket flow
+
+**Running Tests:**
+```bash
+pytest
+pytest -v  # Verbose output
+pytest tests/test_summary_endpoint.py  # Single test file
+```
+
+---
+
+## Dependencies
+
+### Core Dependencies
+
+```
+fastapi==0.123.10          # ASGI web framework
+uvicorn==0.22.1            # ASGI server (implied)
+openai==2.9.0              # OpenAI API client
+websockets==12.0           # WebSocket client/server
+python-dotenv==1.2.1       # Environment variable loading
+pydantic                   # Data validation (via FastAPI)
+```
+
+### Testing Dependencies
+
+```
+pytest==latest
+pytest-asyncio==0.21.1     # Async test support
+pytest-mock==3.12.0        # Mocking utilities
+```
+
+### Optional/Utility Dependencies
+
+```
+httptools==0.7.1           # HTTP parsing (performance)
+uvloop==0.22.1             # Fast event loop (performance)
+watchfiles==1.1.1          # File watching (dev mode)
+email-validator==2.3.0     # Email validation
+python-multipart==0.0.20   # Multipart form parsing
+```
+
+---
+
+## API Usage Examples
+
+### WebSocket Client (Python)
+
+```python
+import asyncio
+import websockets
+import json
+import base64
+
+async def transcribe_audio():
+    uri = "ws://localhost:8000/ws/transcribe"
+    async with websockets.connect(uri) as websocket:
+        # Send audio chunks
+        for chunk_id, audio_bytes in enumerate(audio_stream, start=1):
+            message = {
+                "type": "audio_chunk",
+                "session_id": "session-123",
+                "chunk_id": chunk_id,
+                "audio_format": "pcm_s16le_16k_mono",
+                "data": base64.b64encode(audio_bytes).decode()
+            }
+            await websocket.send(json.dumps(message))
+
+            # Receive and process responses
+            response = await websocket.recv()
+            data = json.loads(response)
+            print(f"Received: {data['type']} - {data.get('text', '')}")
+
+        # End session
+        await websocket.send(json.dumps({
+            "type": "end_session",
+            "session_id": "session-123"
+        }))
+
+asyncio.run(transcribe_audio())
+```
+
+### Summary Generation (cURL)
+
+```bash
+curl -X POST http://localhost:8000/summary \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "session-123",
+    "full_transcript": "Discussion about Q4 roadmap and feature priorities...",
+    "language": "en"
+  }'
+```
+
+**Response:**
+```json
+{
+  "summary": {
+    "short_overview": "The team discussed Q4 roadmap priorities...",
+    "action_items": [
+      "Schedule architecture review meeting",
+      "Update project timeline"
+    ],
+    "decisions": [
+      "Prioritize feature X over feature Y",
+      "Allocate 2 engineers to backend work"
+    ]
+  }
+}
+```
+
+---
+
+## Monitoring & Observability
+
+### Logging
+
+**Log Levels:**
+- `INFO`: Connection events, session lifecycle, API calls
+- `DEBUG`: Detailed event flow, message contents
+- `WARNING`: Rate limits, timeouts, non-critical errors
+- `ERROR`: API failures, connection errors
+
+**Log Format:**
+```
+%(asctime)s - %(name)s - %(levelname)s - %(message)s
+```
+
+**Key Log Events:**
+- WebSocket connection accepted/disconnected
+- ElevenLabs session created/closed
+- Transcription partial/stable received
+- Translation started/completed
+- Summary generation started/completed
+- Error conditions
+
+### Usage Tracking
+
+**Tracked Metrics:**
+- OpenAI API usage (tokens, requests)
+- Request types (translation, summary)
+- Model usage (gpt-4.1-mini, gpt-5-nano)
+
+**Future Enhancements:**
+- Prometheus metrics endpoint
+- DigitalOcean monitoring integration
+- Error rate tracking
+- Latency percentiles
+
+---
+
+## Security Considerations
+
+### API Key Management
+
+- API keys stored as environment variables
+- Marked as secrets in deployment configuration
+- Never logged or exposed in responses
+- Validated on application startup
+
+### CORS Configuration
+
+**Current (MVP):**
+```python
+allow_origins=["*"]  # Allow all origins
+```
+
+**Production Recommendation:**
+```python
+allow_origins=[
+    "https://meetlens.app",
+    "https://app.meetlens.com"
+]
+```
+
+### WebSocket Security
+
+- No authentication implemented (MVP)
+- Recommendation: Add JWT-based auth
+- Validate session_id format
+- Rate limiting per session
+
+### Input Validation
+
+- Pydantic models validate all input
+- Audio format validation
+- Transcript length limits (future)
+- Session ID format validation (future)
+
+---
+
+## Future Enhancements
+
+### Short-Term (Next 3 Months)
+
+1. **Redis Session Storage**
+   - Persist sessions across restarts
+   - Enable horizontal scaling
+
+2. **Authentication & Authorization**
+   - JWT-based WebSocket auth
+   - API key management for REST endpoints
+
+3. **Rate Limiting**
+   - Per-session rate limits
+   - API usage quotas
+
+4. **Enhanced Error Recovery**
+   - Automatic ElevenLabs reconnection
+   - Translation retry logic
+
+### Medium-Term (3-6 Months)
+
+1. **Database Integration**
+   - PostgreSQL for meeting data
+   - Store transcripts, translations, summaries
+   - Historical query support
+
+2. **Multi-Language Support**
+   - Configurable per-session languages
+   - Support 10+ languages
+
+3. **Advanced Analytics**
+   - Meeting duration tracking
+   - Speaker identification
+   - Sentiment analysis
+
+4. **WebRTC Integration**
+   - Direct audio capture from browser
+   - Eliminate client-side audio processing
+
+### Long-Term (6-12 Months)
+
+1. **Speaker Diarization**
+   - Identify multiple speakers
+   - Per-speaker transcripts
+
+2. **Meeting Recording**
+   - Store raw audio
+   - Playback with synchronized captions
+
+3. **Mobile SDKs**
+   - iOS/Android native libraries
+   - React Native support
+
+4. **Enterprise Features**
+   - Multi-tenant support
+   - Custom vocabulary/jargon
+   - Compliance (GDPR, HIPAA)
+
+---
+
+## Appendix
+
+### File Structure
+
+```
+meetlens-backend/
+├── main.py                     # FastAPI application entry point
+├── Procfile                    # DigitalOcean run command
+├── requirements.txt            # Python dependencies
+├── README.md                   # Setup and deployment guide
+├── PRD.md                      # This document
+├── .env                        # Local environment variables (git-ignored)
+├── .do/
+│   └── app.yaml               # DigitalOcean deployment config
+├── models/
+│   ├── __init__.py
+│   └── messages.py            # Pydantic data models
+├── endpoints/
+│   ├── __init__.py
+│   └── websocket.py           # WebSocket endpoint handler
+├── services/
+│   ├── __init__.py
+│   ├── elevenlabs_service.py  # ElevenLabs WebSocket client
+│   ├── session_manager.py     # Session state management
+│   ├── translation_service.py # OpenAI translation
+│   ├── summary_service.py     # OpenAI summarization
+│   ├── whisper_service.py     # OpenAI Whisper (legacy)
+│   ├── usage_tracker.py       # API usage tracking
+│   └── transcript_merger.py   # Transcript merging logic
+└── tests/
+    ├── __init__.py
+    ├── conftest.py            # Pytest configuration
+    ├── test_session_state.py
+    ├── test_transcript_merger.py
+    ├── test_summary_endpoint.py
+    ├── test_usage_tracker.py
+    ├── test_ws_transcribe.py
+    └── test_integration_mvp.py
+```
+
+### Glossary
+
+- **Partial Transcript**: Interim transcription that may be revised
+- **Stable Transcript**: Finalized transcription that won't change
+- **Incremental Message**: Message containing only new text since last update
+- **Session State**: Per-session data maintained throughout meeting
+- **ElevenLabs Scribe v2**: Real-time speech-to-text API
+- **OpenAI GPT**: Large language model for translation/summarization
+- **ASGI**: Asynchronous Server Gateway Interface (FastAPI protocol)
+- **PCM**: Pulse Code Modulation (raw audio format)
+
+---
+
+## Document Revision History
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | 2024-12-12 | System | Initial PRD based on implemented codebase |
+
+---
+
+**End of Document**

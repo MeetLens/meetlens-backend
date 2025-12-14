@@ -1,0 +1,45 @@
+MeetLens Database Migrations
+
+This directory contains Alembic migrations for the MeetLens database schema.
+
+## Creating a new migration
+
+To create a new migration:
+
+```bash
+alembic revision -m "description of changes"
+```
+
+To auto-generate a migration from model changes:
+
+```bash
+alembic revision --autogenerate -m "description of changes"
+```
+
+## Running migrations
+
+To upgrade to the latest version:
+
+```bash
+alembic upgrade head
+```
+
+To downgrade one version:
+
+```bash
+alembic downgrade -1
+```
+
+## Migration history
+
+To view migration history:
+
+```bash
+alembic history
+```
+
+To view current version:
+
+```bash
+alembic current
+```
