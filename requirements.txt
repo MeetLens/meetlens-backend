@@ -6,7 +6,7 @@ fastapi-cli==0.0.16
 fastapi-cloud-cli==0.6.0
 httptools==0.7.1
 Jinja2==3.1.6
-litellm==1.58.2
+litellm==1.80.16
 openai==2.9.0
 passlib[bcrypt]==1.7.4
 pip==25.3

@@ -32,12 +32,10 @@ def _get_provider_config(provider: str, model: str) -> LLMServiceConfig:
     api_key = None
 
     if provider == "nebius":
-        # LiteLLM native support for Nebius uses "nebius/" prefix
+        # Use native LiteLLM support for Nebius with the "nebius/" prefix
         if not model.startswith("nebius/"):
             model = f"nebius/{model}"
         api_key = NEBIUS_API_KEY
-        # base_url is typically handled by LiteLLM for native providers, 
-        # but we keep NEBIUS_BASE_URL as a fallback if needed
         base_url = NEBIUS_BASE_URL
 
     return LLMServiceConfig(
