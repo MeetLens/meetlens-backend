@@ -1,105 +1,88 @@
 # MeetLens Backend
 
-The FastAPI-based backend for the MeetLens MVP. This service provides real-time transcription, translation, and AI-powered meeting summaries using WebSockets and OpenAI.
+The FastAPI-based backend for the MeetLens MVP. This service provides real-time transcription, translation, and AI-powered meeting summaries using WebSockets, ElevenLabs, and OpenAI.
 
-## Features
+## 📋 Documentation Index
 
-- **Real-time Transcription & Translation**: Handles audio streams via WebSockets (`/ws/transcribe`).
-- **Meeting Summaries**: Generates comprehensive summaries, action items, and key decisions using OpenAI GPT models (`/summary`).
-- **Health Check**: Simple endpoint to verify service status (`/`).
-- **CORS Support**: Configured to support cross-origin requests (e.g., from Flutter apps).
+### Product & Requirements
+- [Product Requirements Document (PRD)](docs/product/PRD.md) - Core vision and scope
+- [Product Positioning](docs/product/POSITIONING.md) - Target audience and value prop
+- [MVP Acceptance Criteria](docs/product/ACCEPTANCE_CRITERIA.md) - Success definitions
 
-## Tech Stack
+### Technical Architecture
+- [Architecture Flow](docs/architecture/FLOW.md) - System design and sequence diagrams
+- [API & Schema Contract](docs/api/CONTRACT.md) - REST and WebSocket protocol details
+- [Schema Diagram](docs/architecture/SCHEMA_DIAGRAM.md) - Database relationship visualization
 
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
-- **Runtime**: Python 3.9+
-- **AI/LLM**: OpenAI API
-- **Networking**: WebSockets, Uvicorn (ASGI)
-- **Testing**: Pytest
+### Database
+- [Database Setup & Quick Start](docs/database/SETUP.md) - **Start here for development**
+- [Database Overview](docs/database/OVERVIEW.md) - Detailed schema reference
+- [Implementation Summary](docs/database/IMPLEMENTATION_SUMMARY.md) - Current state of DB layer
 
-## Prerequisites
+### Development
+- [Masterprompt](docs/development/MASTERPROMPT.md) - System instructions for AI agents
+- [Documentation Update Summary](docs/development/UPDATE_SUMMARY.md) - Recent changes log
 
-- Python 3.9 or higher
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.9+
+- ElevenLabs API Key
 - OpenAI API Key
 
-## Installation
+### Installation & Setup
+For detailed setup instructions, including database configuration, see the [Database Setup & Quick Start](docs/database/SETUP.md) guide.
 
-1. **Clone the repository** (if not already done):
-   ```sh
+1. **Clone and Install**:
+   ```bash
    git clone <repository-url>
    cd meetlens-backend
-   ```
-
-2. **Create and activate a virtual environment**:
-   ```sh
    python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```sh
+   source .venv/bin/activate
    pip install -r requirements.txt
    ```
 
-## Configuration
-
-1. Create a `.env` file in the root directory:
-   ```sh
-   touch .env
-   ```
-
-2. Add your OpenAI API key to `.env`:
+2. **Configuration**:
+   Create a `.env` file with your keys:
    ```env
-   OPENAI_API_KEY=your_openai_api_key_here
+   ELEVENLABS_API_KEY=your_key
+   OPENAI_API_KEY=your_key
    ```
 
-## Usage
-
-### Running the Server
-
-Start the application using FastAPI CLI (recommended for development):
-
-```sh
-fastapi dev main.py
-```
-
-The server will start at `http://0.0.0.0:8000`.
-
-### API Documentation
-
-Interactive API documentation is available at:
-- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+3. **Run the Server**:
+   ```bash
+   fastapi dev main.py
+   ```
+   The server will start at `http://localhost:8000`.
 
 ### Key Endpoints
-
 - **WebSocket**: `ws://localhost:8000/ws/transcribe`
-- **Generate Summary**: `POST /summary`
-    - Body:
-      ```json
-      {
-        "session_id": "optional-uuid",
-        "full_transcript": "Meeting text content...",
-        "language": "en"
-      }
-      ```
+- **REST Summary**: `POST /summary`
+- **API Docs**: `http://localhost:8000/docs`
 
-## Testing
+---
 
-Run the test suite using `pytest`:
+## 🛠 Tech Stack
+- **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
+- **Transcription**: ElevenLabs Scribe v2 Realtime API
+- **Translation & Summarization**: OpenAI GPT API
+- **Networking**: WebSockets, Uvicorn (ASGI)
+- **Database**: PostgreSQL (SQLAlchemy 2.0 Async, Alembic)
 
-```sh
+---
+
+## 🧪 Testing
+```bash
+# Run all tests
 pytest
+
+# Run database tests only
+pytest tests/test_database_schema.py tests/test_auth_flows.py -v
 ```
 
-## Deployment
+---
 
-### DigitalOcean App Platform
-
-- Ensure `OPENAI_API_KEY` and `ELEVENLABS_API_KEY` are set as environment variables.
-- The provided `Procfile` sets the web process to run Uvicorn on the port exposed by the platform (`PORT`, default 8080):
-  ```
-  web: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
-  ```
-- In the App Platform settings, you can leave the "Run Command" empty to use the `Procfile`, or explicitly set the same command. The public HTTP port should be `8080` to match the default.
-- The health check can point to `/` on the same port.
+## 🚢 Deployment
+MeetLens Backend is designed for [DigitalOcean App Platform](https://www.digitalocean.com/products/app-platform/). See the [PRD](docs/product/PRD.md#deployment) for deployment details.

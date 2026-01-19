@@ -1,6 +1,16 @@
 """
 Whisper Service for audio transcription using OpenAI Whisper API.
 Handles PCM audio format conversion and API calls.
+
+NOTE: This service is NOT used in the current MVP implementation.
+The MVP uses ElevenLabs Scribe v2 Realtime API for transcription instead.
+
+This implementation is kept as an alternative option for:
+- Cost optimization (Whisper may be cheaper for batch processing)
+- Fallback if ElevenLabs becomes unavailable
+- On-device transcription in future "Pro/Offline" mode
+
+Current implementation: See services/elevenlabs_service.py
 """
 import os
 import base64

@@ -93,110 +93,9 @@ Password reset flow tokens.
 | used_at | TIMESTAMPTZ | NULLABLE | Usage timestamp |
 | created_at | TIMESTAMPTZ | NOT NULL | Creation timestamp |
 
-## Setup Instructions
+## Setup & Troubleshooting
 
-### 1. Install PostgreSQL
-
-macOS (Homebrew):
-```bash
-brew install postgresql@15
-brew services start postgresql@15
-```
-
-Ubuntu/Debian:
-```bash
-sudo apt-get update
-sudo apt-get install postgresql postgresql-contrib
-sudo systemctl start postgresql
-```
-
-### 2. Create Databases
-
-```bash
-# Connect to PostgreSQL
-psql postgres
-
-# Create databases
-CREATE DATABASE meetlens;
-CREATE DATABASE meetlens_test;
-
-# Create user (optional)
-CREATE USER meetlens_user WITH PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE meetlens TO meetlens_user;
-GRANT ALL PRIVILEGES ON DATABASE meetlens_test TO meetlens_user;
-
-# Exit psql
-\q
-```
-
-### 3. Configure Environment
-
-Copy `.env.example` to `.env` and update database URLs:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-```
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/meetlens
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/meetlens_test
-```
-
-### 4. Install Python Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 5. Run Migrations
-
-```bash
-# Apply all migrations
-alembic upgrade head
-
-# View migration history
-alembic history
-
-# View current version
-alembic current
-```
-
-## Migration Management
-
-### Creating New Migrations
-
-```bash
-# Auto-generate migration from model changes
-alembic revision --autogenerate -m "description of changes"
-
-# Create empty migration
-alembic revision -m "description"
-```
-
-### Applying Migrations
-
-```bash
-# Upgrade to latest
-alembic upgrade head
-
-# Upgrade one version
-alembic upgrade +1
-
-# Downgrade one version
-alembic downgrade -1
-
-# Downgrade to specific version
-alembic downgrade <revision_id>
-```
-
-### Migration Best Practices
-
-1. Always review auto-generated migrations before applying
-2. Test migrations on a copy of production data
-3. Never edit applied migrations - create new ones
-4. Keep migrations small and focused
-5. Include both upgrade and downgrade paths
+For installation, environment configuration, migration management, and troubleshooting, see the [Database Setup & Quick Start](SETUP.md) guide.
 
 ## Using the Database
 
@@ -275,27 +174,7 @@ await magic_link_repo.mark_as_used(retrieved)
 
 ## Testing
 
-### Running Database Tests
-
-```bash
-# Run all database tests
-pytest tests/test_database_schema.py tests/test_auth_flows.py -v
-
-# Run specific test
-pytest tests/test_database_schema.py::TestUserSchema::test_create_user -v
-```
-
-### Test Database Setup
-
-Tests automatically:
-1. Create all tables before test session
-2. Use transactions for each test (rolled back after)
-3. Drop all tables after test session
-
-Configure test database URL in `.env`:
-```
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/meetlens_test
-```
+See [Database Setup & Quick Start](SETUP.md#6-run-tests) for instructions on running database tests.
 
 ## Security Considerations
 
@@ -317,40 +196,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/meetlens
 
 ## Troubleshooting
 
-### Connection Issues
-
-```bash
-# Test PostgreSQL connection
-psql postgresql://postgres:postgres@localhost:5432/meetlens
-
-# Check if PostgreSQL is running
-brew services list  # macOS
-sudo systemctl status postgresql  # Linux
-```
-
-### Migration Issues
-
-```bash
-# Check current migration version
-alembic current
-
-# View migration history
-alembic history
-
-# Reset to specific version
-alembic downgrade <revision_id>
-alembic upgrade head
-```
-
-### Test Database Issues
-
-```bash
-# Manually drop and recreate test database
-psql postgres
-DROP DATABASE meetlens_test;
-CREATE DATABASE meetlens_test;
-\q
-```
+See [Database Setup & Quick Start](SETUP.md#troubleshooting).
 
 ## Future Extensions
 

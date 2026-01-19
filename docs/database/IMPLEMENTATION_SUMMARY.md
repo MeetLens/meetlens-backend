@@ -4,7 +4,9 @@
 
 This document summarizes the complete implementation of the PostgreSQL-based Users & Accounts database schema for MeetLens, as specified in the PRD.
 
-**Status**: ✅ Complete - Ready for MVP
+**Status**: ✅ Complete - **Ready for Phase 2** (Not used in MVP)
+
+**Note**: The database infrastructure is fully implemented and tested, but **not integrated into the MVP application**. The current MVP focuses on core transcription/translation features without authentication. Database integration is planned for Phase 2.
 
 ---
 
@@ -322,80 +324,9 @@ docs/
 
 ---
 
-## How to Use
+## How to Use & Test
 
-### Setup
-
-```bash
-# 1. Install PostgreSQL
-brew install postgresql@15
-brew services start postgresql@15
-
-# 2. Create databases
-createdb meetlens
-createdb meetlens_test
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-# Edit DATABASE_URL in .env
-
-# 5. Run migrations
-alembic upgrade head
-```
-
-### Usage in Code
-
-```python
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from database.config import get_db
-from database.repositories import UserRepository, AccountRepository, AccountMembershipRepository
-from database.utils import hash_password
-
-@app.post("/signup")
-async def signup(email: str, password: str, db: AsyncSession = Depends(get_db)):
-    # Create repositories
-    user_repo = UserRepository(db)
-    account_repo = AccountRepository(db)
-    membership_repo = AccountMembershipRepository(db)
-
-    # Hash password
-    password_hash = hash_password(password)
-
-    # Create user
-    user = await user_repo.create_user(email=email, password_hash=password_hash)
-
-    # Create personal account
-    account = await account_repo.create_account(account_type="personal")
-
-    # Create membership
-    membership = await membership_repo.create_membership(
-        user_id=user.id,
-        account_id=account.id,
-        role="owner"
-    )
-
-    # Commit transaction
-    await db.commit()
-
-    return {"user_id": str(user.id), "account_id": str(account.id)}
-```
-
-### Running Tests
-
-```bash
-# All database tests
-pytest tests/test_database_schema.py tests/test_auth_flows.py -v
-
-# Schema tests only
-pytest tests/test_database_schema.py -v
-
-# Auth flow tests only
-pytest tests/test_auth_flows.py -v
-```
+For database setup, usage examples, and running tests, please refer to the [Database Setup & Quick Start](SETUP.md) guide.
 
 ---
 
@@ -436,22 +367,93 @@ The schema is designed to support without migrations:
 
 ## Next Steps
 
-### For MVP Launch:
+### For Phase 2 (Database Integration):
 
 1. **Install PostgreSQL** on development/production environments
 2. **Run migrations** with `alembic upgrade head`
-3. **Implement auth endpoints** using the repository layer
+3. **Implement auth endpoints** using the repository layer:
+   - [ ] `POST /auth/signup` - User registration with email/password
+   - [ ] `POST /auth/login` - Login with session creation
+   - [ ] `POST /auth/magic-link` - Request magic link for passwordless login
+   - [ ] `POST /auth/magic-link/verify` - Verify magic link token
+   - [ ] `POST /auth/logout` - Revoke session
+   - [ ] `POST /auth/password-reset` - Request password reset
+   - [ ] `POST /auth/password-reset/verify` - Complete password reset
 4. **Add email verification** flow (infrastructure is ready)
 5. **Add session middleware** for authentication
-6. **Implement signup/login endpoints**
+6. **Integrate with WebSocket endpoint** - Associate sessions with user accounts
+7. **Add meeting persistence** - Store transcripts and summaries in database
 
-### For Phase 2:
+### For MVP (Current Phase):
 
-1. Enable email verification enforcement
-2. Add team account support
-3. Add invitation system
-4. Add billing integration
-5. Add workspace hierarchy
+The MVP intentionally operates **without database or authentication** to focus on core functionality:
+- Real-time transcription (ElevenLabs)
+- Live translation (OpenAI)
+- Meeting summaries (OpenAI)
+- WebSocket-based streaming
+
+---
+
+## Phase 2 Implementation Tasks
+
+### Authentication Endpoints
+
+- [ ] **User Signup Flow** (`POST /auth/signup`)
+  - Create user with email + password
+  - Auto-create personal account
+  - Create account membership with "owner" role
+  - Send email verification (optional in MVP)
+  
+- [ ] **User Login Flow** (`POST /auth/login`)
+  - Verify email + password
+  - Create auth session with token
+  - Return session token to client
+  
+- [ ] **Magic Link Flow** (`POST /auth/magic-link`, `POST /auth/magic-link/verify`)
+  - Generate magic link token
+  - Send email with link
+  - Verify token and create session
+  
+- [ ] **Password Reset Flow** (`POST /auth/password-reset`, `POST /auth/password-reset/verify`)
+  - Generate reset token
+  - Send reset email
+  - Verify token and update password
+
+### Session Management
+
+- [ ] **Session Middleware**
+  - Extract session token from Authorization header
+  - Validate token (expiry, revocation)
+  - Load user context into request state
+  
+- [ ] **Protected Endpoints**
+  - Require authentication for `/ws/transcribe`
+  - Require authentication for `/summary`
+  - Add user_id to session state
+
+### Meeting Persistence
+
+- [ ] **Meeting Table** (new migration needed)
+  - Store meeting metadata (start_time, end_time, user_id, account_id)
+  - Store full transcript
+  - Store translation
+  - Store summary (short_overview, action_items, decisions)
+  
+- [ ] **Meeting API Endpoints**
+  - `GET /meetings` - List user's meetings
+  - `GET /meetings/{meeting_id}` - Get meeting details
+  - `DELETE /meetings/{meeting_id}` - Soft delete meeting
+
+### Workspace Support
+
+- [ ] **Team Accounts**
+  - Support `account_type = 'team'` (schema already supports it)
+  - Add team creation endpoint
+  - Add team invitation system
+  
+- [ ] **Workspace Hierarchy**
+  - Use `parent_account_id` for workspace nesting
+  - Implement permission inheritance
 
 ---
 
@@ -486,12 +488,10 @@ All PRD acceptance criteria have corresponding tests:
 
 ## Documentation Status
 
-### ✅ Complete Documentation:
-
-1. **Quick Start** - `database/README.md`
-2. **Comprehensive Guide** - `docs/database.md`
-3. **Migration Guide** - `alembic/README`
-4. **Code Documentation** - Inline docstrings in all files
+- [Quick Start Guide](SETUP.md)
+- [Comprehensive Database Overview](OVERVIEW.md)
+- [Migration Guide](../../alembic/README)
+- Code Documentation: Inline docstrings in all files
 
 ---
 

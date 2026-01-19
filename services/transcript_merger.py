@@ -1,6 +1,18 @@
 """
 TranscriptMerger handles deduplication and stabilization of transcript segments.
 Implements overlap detection and sentence boundary detection as per Architecture & Flow spec.
+
+NOTE: This service is NOT used in the current MVP implementation.
+The MVP uses ElevenLabs Scribe v2 Realtime API which provides built-in transcript merging.
+
+This implementation is kept as an alternative option for:
+- Use with OpenAI Whisper API (when not using ElevenLabs)
+- Fine-tuned control over merging behavior
+- Custom sentence boundary detection
+- Fallback if ElevenLabs' built-in merging is insufficient
+
+Current implementation: ElevenLabs handles merging automatically via committed_transcript events.
+See: services/elevenlabs_service.py and endpoints/websocket.py
 """
 import re
 import logging
