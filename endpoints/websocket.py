@@ -293,29 +293,42 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
 
 
 async def _handle_end_session(websocket: WebSocket, message_dict: dict, session_id: str, active_sessions: set):
-    """Handle end_session message: finalize session state and close ElevenLabs connection."""
+    """Handle end_session message: send any remaining buffer_unstable content and finalize session state."""
     try:
         # Validate message
         end_session_msg = EndSessionMessage(**message_dict)
-        
+
+        # Get current session state before finalizing to access buffer_unstable
+        current_session_state = await session_manager.get(session_id)
+
+        # Send any remaining buffer_unstable content as final transcript_stable message
+        if current_session_state and current_session_state.buffer_unstable.strip():
+            logger.info(f"Sending final buffer_unstable content for session {session_id}: '{current_session_state.buffer_unstable[:100]}...'")
+            try:
+                stable_msg = TranscriptStableMessage(
+                    type="transcript_stable",
+                    session_id=session_id,
+                    text=current_session_state.buffer_unstable.strip()
+                )
+                await websocket.send_json(stable_msg.model_dump())
+            except Exception as e:
+                logger.error(f"Error sending final transcript_stable message for session {session_id}: {str(e)}")
+
         # Close ElevenLabs session
         try:
             await elevenlabs_manager.close_session(session_id)
             active_sessions.discard(session_id)
         except Exception as e:
             logger.error(f"Error closing ElevenLabs session {session_id}: {str(e)}")
-        
-        # Finalize session state
+
+        # Finalize session state (marks as ended but keeps state for summary)
         session_state = await session_manager.finalize(session_id)
-        
+
         if session_state:
             logger.info(f"Session {session_id} finalized. Full transcript length: {len(session_state.full_transcript)}")
         else:
             logger.warning(f"Session {session_id} not found for finalization")
-        
-        # Send acknowledgment (optional, not in spec but helpful)
-        # Client will call /summary endpoint separately
-    
+
     except Exception as e:
         logger.error(f"Error handling end_session: {str(e)}")
         await _send_error(websocket, session_id, f"Failed to end session: {str(e)}")
