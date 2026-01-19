@@ -75,6 +75,11 @@ async def complete(
         if llm_config.api_key:
             completion_kwargs["api_key"] = llm_config.api_key
 
+        # If it's a custom provider like Nebius (which is OpenAI compatible),
+        # tell LiteLLM explicitly to use the openai provider without stripping the model prefix
+        if llm_config.provider == "nebius":
+            completion_kwargs["custom_llm_provider"] = "openai"
+
         # Call LiteLLM async completion
         response = await acompletion(**completion_kwargs)
 
