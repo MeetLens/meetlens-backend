@@ -26,16 +26,33 @@ NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 NEBIUS_MODEL = "openai/gpt-oss-120b"
 NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 
+def _get_provider_config(provider: str, model: str) -> LLMServiceConfig:
+    """Helper to create config with provider-specific defaults."""
+    base_url = None
+    api_key = None
+
+    if provider == "nebius":
+        base_url = NEBIUS_BASE_URL
+        api_key = NEBIUS_API_KEY
+
+    return LLMServiceConfig(
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+    )
+
+
 LLM_SERVICE_CONFIGS: Dict[str, LLMServiceConfig] = {
-    DEFAULT_SERVICE_KEY: LLMServiceConfig(
+    DEFAULT_SERVICE_KEY: _get_provider_config(
         provider=DEFAULT_LLM_PROVIDER,
         model=DEFAULT_LLM_MODEL,
     ),
-    SUMMARY_SERVICE_KEY: LLMServiceConfig(
+    SUMMARY_SERVICE_KEY: _get_provider_config(
         provider=os.getenv("SUMMARY_PROVIDER", DEFAULT_LLM_PROVIDER),
         model=os.getenv("SUMMARY_MODEL", "gpt-5-nano"),
     ),
-    TRANSLATION_SERVICE_KEY: LLMServiceConfig(
+    TRANSLATION_SERVICE_KEY: _get_provider_config(
         provider=os.getenv("TRANSLATION_PROVIDER", DEFAULT_LLM_PROVIDER),
         model=os.getenv("TRANSLATION_MODEL", "gpt-4.1-mini"),
     ),
