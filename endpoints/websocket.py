@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from typing import Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from models.messages import (
     AudioChunkMessage,
@@ -37,7 +38,8 @@ async def websocket_transcribe(websocket: WebSocket):
     Processes audio chunks and streams transcript/translation messages.
     """
     await websocket.accept()
-    logger.info("WebSocket connection accepted")
+    target_lang = websocket.query_params.get("target_lang")
+    logger.info("WebSocket connection accepted (target_lang=%s)", target_lang or DEFAULT_TARGET_LANG)
     
     # Track active sessions for this WebSocket connection
     active_sessions = set()
@@ -58,7 +60,13 @@ async def websocket_transcribe(websocket: WebSocket):
                 
                 # Route by message type
                 if message_type == "audio_chunk":
-                    await _handle_audio_chunk(websocket, message_dict, session_id, active_sessions)
+                    await _handle_audio_chunk(
+                        websocket,
+                        message_dict,
+                        session_id,
+                        active_sessions,
+                        target_lang
+                    )
                 elif message_type == "end_session":
                     await _handle_end_session(websocket, message_dict, session_id, active_sessions)
                 else:
@@ -88,7 +96,13 @@ async def websocket_transcribe(websocket: WebSocket):
                 logger.error(f"Error closing ElevenLabs session {session_id} on disconnect: {str(e)}")
 
 
-async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_id: str, active_sessions: set):
+async def _handle_audio_chunk(
+    websocket: WebSocket,
+    message_dict: dict,
+    session_id: str,
+    active_sessions: set,
+    target_lang: Optional[str],
+):
     """Handle audio_chunk message: forward to ElevenLabs and stream responses."""
     try:
         # Parse and validate message
@@ -96,6 +110,11 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
         
         # Get or create session state (for full transcript accumulation)
         session_state = await session_manager.get_or_create(session_id)
+        message_target_lang = (audio_chunk_msg.target_lang or "").strip()
+        normalized_target_lang = message_target_lang or (target_lang or DEFAULT_TARGET_LANG).strip()
+        if session_state.target_lang != normalized_target_lang:
+            session_state.target_lang = normalized_target_lang
+            await session_manager.update(session_id, session_state)
         
         # Decode base64 audio data
         try:
@@ -124,10 +143,11 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                     if partial_text:
                         async def process_partial_translation(text: str):
                             try:
+                                session_target_lang = session_state.target_lang or DEFAULT_TARGET_LANG
                                 translated_partial = await translate_segment(
                                     text,
                                     source_lang=DEFAULT_SOURCE_LANG,
-                                    target_lang=DEFAULT_TARGET_LANG
+                                    target_lang=session_target_lang
                                 )
                                 translated_partial = translated_partial.strip() if translated_partial else ""
 
@@ -194,9 +214,10 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                         # Refresh translation using stable transcript (and clear partial state)
                         async def process_stable_translation():
                             try:
+                                session_target_lang = session_state.target_lang or DEFAULT_TARGET_LANG
                                 logger.info(
                                     f"Translating stable transcript for session {session_id} "
-                                    f"({len(session_state.full_transcript)} chars total) {DEFAULT_SOURCE_LANG}->{DEFAULT_TARGET_LANG}"
+                                    f"({len(session_state.full_transcript)} chars total) {DEFAULT_SOURCE_LANG}->{session_target_lang}"
                                 )
 
                                 translation_increment = ""
@@ -205,7 +226,7 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                     translated_increment = await translate_segment(
                                         incremental_stable,
                                         source_lang=DEFAULT_SOURCE_LANG,
-                                        target_lang=DEFAULT_TARGET_LANG
+                                        target_lang=session_target_lang
                                     )
                                     translated_increment = translated_increment.strip() if translated_increment else ""
                                     if translated_increment:
@@ -218,7 +239,7 @@ async def _handle_audio_chunk(websocket: WebSocket, message_dict: dict, session_
                                     retranslated_full = await translate_segment(
                                         session_state.full_transcript,
                                         source_lang=DEFAULT_SOURCE_LANG,
-                                        target_lang=DEFAULT_TARGET_LANG
+                                        target_lang=session_target_lang
                                     )
                                     retranslated_full = retranslated_full.strip() if retranslated_full else ""
                                     if retranslated_full:
@@ -346,4 +367,3 @@ async def _send_error(websocket: WebSocket, session_id: str, message: str, code:
         await websocket.send_json(error_msg.model_dump())
     except Exception as e:
         logger.error(f"Failed to send error message: {str(e)}")
-

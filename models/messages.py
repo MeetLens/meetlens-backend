@@ -13,6 +13,7 @@ class AudioChunkMessage(BaseModel):
     chunk_id: int
     audio_format: Literal["pcm_s16le_16k_mono"]
     data: str  # base64 encoded audio bytes
+    target_lang: Optional[str] = None
 
 
 class EndSessionMessage(BaseModel):
@@ -80,4 +81,4 @@ class SessionState(BaseModel):
     full_transcript: str = ""  # accumulated stable transcript (from ElevenLabs committed_transcript events)
     stable_translation: str = ""  # accumulated stable translation text
     partial_translation: str = ""  # latest partial translation for the current unstable segment
-
+    target_lang: Optional[str] = None
